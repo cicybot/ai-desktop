@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Terminal, Globe, Plus, RefreshCw, Monitor, Trash2, ChevronDown, Zap, Settings, LogOut, Sidebar as SidebarIcon, AlignLeft, AlignRight, Wifi, LayoutGrid, User as UserIcon, Check } from 'lucide-react';
+import { Terminal, Globe, Plus, RefreshCw, Monitor, Trash2, ChevronDown, Settings, LogOut, Sidebar as SidebarIcon, AlignLeft, AlignRight, Wifi, LayoutGrid, User as UserIcon, Check } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { WindowType, DesktopState, User, PLANS } from '../types';
+import { Logo } from './Logo';
 
 interface TopBarProps {
   desktops: DesktopState[];
@@ -9,6 +10,7 @@ interface TopBarProps {
   onSwitchDesktop: (id: string) => void;
   onAddDesktop: () => void;
   onRemoveDesktop: (id: string) => void;
+  onRenameDesktop: (id: string, name: string) => void;
   onAddWindow: (type: WindowType, url?: string, title?: string) => void;
   isSidebarOpen: boolean;
   sidebarPosition: 'left' | 'right';
@@ -62,6 +64,7 @@ export function TopBar({
   onSwitchDesktop,
   onAddDesktop,
   onRemoveDesktop,
+  onRenameDesktop,
   onAddWindow,
   isSidebarOpen,
   sidebarPosition,
@@ -73,22 +76,28 @@ export function TopBar({
   onLogout,
   onUpgrade,
 }: TopBarProps) {
-  const [activeMenu, setActiveMenu] = useState<'chats' | 'apps' | 'desktops' | 'settings' | null>(null);
+  const [activeMenu, setActiveMenu] = useState<'chats' | 'apps' | 'desktops' | 'settings' | 'user' | null>(null);
   const [urlInput, setUrlInput] = useState('');
+  const [editingDesktopId, setEditingDesktopId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
         setActiveMenu(null);
+        setEditingDesktopId(null);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const toggleMenu = (menu: 'chats' | 'apps' | 'desktops' | 'settings') => {
+  const toggleMenu = (menu: 'chats' | 'apps' | 'desktops' | 'settings' | 'user') => {
     setActiveMenu(activeMenu === menu ? null : menu);
+    if (menu !== 'desktops') {
+        setEditingDesktopId(null);
+    }
   };
 
   const handleAddUrl = () => {
@@ -103,6 +112,19 @@ export function TopBar({
     }
   };
 
+  const handleStartRenaming = (e: React.MouseEvent, desktop: DesktopState) => {
+    e.stopPropagation();
+    setEditingDesktopId(desktop.id);
+    setEditingName(desktop.name);
+  };
+
+  const handleFinishRenaming = () => {
+    if (editingDesktopId && editingName.trim()) {
+        onRenameDesktop(editingDesktopId, editingName.trim());
+    }
+    setEditingDesktopId(null);
+  };
+
   const activeDesktop = desktops.find(d => d.id === activeDesktopId);
 
   return (
@@ -110,9 +132,7 @@ export function TopBar({
       
       {/* Left: Logo & Desktop Switcher */}
       <div className="flex items-center gap-4">
-        <div className="text-yellow-500 flex items-center justify-center">
-            <Zap size={20} fill="currentColor" />
-        </div>
+        <Logo size="sm" showText={false} />
 
         {/* Desktop Switcher Button */}
         <div className="relative">
@@ -124,10 +144,11 @@ export function TopBar({
             )}
             >
             <span>{activeDesktop?.name || 'Desktop'}</span>
+            <ChevronDown size={14} className="text-gray-500" />
             </button>
 
             {activeMenu === 'desktops' && (
-            <div className="absolute top-full left-0 mt-2 w-56 bg-[#1c1f26] border border-[#2a2e35] rounded-lg shadow-xl overflow-hidden z-50 flex flex-col">
+            <div className="absolute top-full left-0 mt-2 w-64 bg-[#1c1f26] border border-[#2a2e35] rounded-lg shadow-xl overflow-hidden z-50 flex flex-col">
                 <div className="flex items-center justify-between px-3 py-2 border-b border-[#2a2e35] text-xs text-gray-500 uppercase tracking-wider">
                 <span>Workspaces</span>
                 <button className="hover:text-white" onClick={() => {
@@ -141,26 +162,54 @@ export function TopBar({
                     key={desktop.id}
                     className="group flex items-center justify-between px-3 py-2 hover:bg-[#2a2e35] cursor-pointer"
                     onClick={() => {
-                        onSwitchDesktop(desktop.id);
-                        setActiveMenu(null);
+                        if (editingDesktopId !== desktop.id) {
+                            onSwitchDesktop(desktop.id);
+                            setActiveMenu(null);
+                        }
                     }}
                     >
-                    <div className="flex items-center gap-2 text-gray-400 group-hover:text-white">
-                        <Monitor size={14} className={desktop.id === activeDesktopId ? "text-blue-400" : "text-gray-500"} />
-                        <span className={cn("truncate", desktop.id === activeDesktopId && "font-medium text-white")}>
-                            {desktop.name}
-                        </span>
+                    <div className="flex items-center gap-2 text-gray-400 group-hover:text-white flex-1 min-w-0">
+                        <Monitor size={14} className={desktop.id === activeDesktopId ? "text-blue-400 shrink-0" : "text-gray-500 shrink-0"} />
+                        
+                        {editingDesktopId === desktop.id ? (
+                            <input
+                                type="text"
+                                value={editingName}
+                                onChange={(e) => setEditingName(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleFinishRenaming();
+                                    e.stopPropagation();
+                                }}
+                                onBlur={handleFinishRenaming}
+                                onClick={(e) => e.stopPropagation()}
+                                className="bg-[#111] text-white px-1 py-0.5 rounded border border-blue-500/50 outline-none w-full text-sm"
+                                autoFocus
+                            />
+                        ) : (
+                            <span 
+                                className={cn("truncate", desktop.id === activeDesktopId && "font-medium text-white")}
+                                onDoubleClick={(e) => handleStartRenaming(e, desktop)}
+                                title="Double click to rename"
+                            >
+                                {desktop.name}
+                            </span>
+                        )}
                     </div>
-                    {desktops.length > 1 && (
-                        <button
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                onRemoveDesktop(desktop.id);
-                            }}
-                            className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-500 transition-opacity"
-                        >
-                            <Trash2 size={14} />
-                        </button>
+                    
+                    {editingDesktopId !== desktop.id && (
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            {desktops.length > 1 && (
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        onRemoveDesktop(desktop.id);
+                                    }}
+                                    className="text-gray-500 hover:text-red-500 p-1"
+                                >
+                                    <Trash2 size={14} />
+                                </button>
+                            )}
+                        </div>
                     )}
                     </div>
                 ))}
@@ -172,7 +221,7 @@ export function TopBar({
         {/* Divider */}
         <div className="w-px h-6 bg-[#2a2e35]" />
 
-        {/* Chats Menu */}
+        {/* Agents Menu (formerly Chats) */}
         <div className="relative">
             <button
             onClick={() => toggleMenu('chats')}
@@ -182,13 +231,13 @@ export function TopBar({
             )}
             >
             <span className="font-mono text-blue-400 text-lg leading-none">{'>_'}</span>
-            <span>Chats</span>
+            <span>Agents</span>
             </button>
 
             {activeMenu === 'chats' && (
             <div className="absolute top-full left-0 mt-2 w-64 bg-[#1c1f26] border border-[#2a2e35] rounded-lg shadow-xl overflow-hidden z-50 flex flex-col">
                 <div className="flex items-center justify-between px-3 py-2 border-b border-[#2a2e35] text-xs text-gray-500 uppercase tracking-wider">
-                <span>Terminal Sessions</span>
+                <span>Active Agents</span>
                 <div className="flex gap-2">
                     <button className="hover:text-white"><RefreshCw size={14} /></button>
                     <button className="hover:text-white" onClick={() => {

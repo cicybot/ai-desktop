@@ -167,6 +167,12 @@ export default function App() {
     setActiveDesktopId(newId);
   };
 
+  const handleRenameDesktop = (id: string, name: string) => {
+    setDesktops((prev) =>
+      prev.map((d) => (d.id === id ? { ...d, name } : d))
+    );
+  };
+
   const handleRemoveDesktop = (id: string) => {
     if (desktops.length <= 1) return;
     
@@ -422,6 +428,7 @@ export default function App() {
         onSwitchDesktop={setActiveDesktopId}
         onAddDesktop={handleAddDesktop}
         onRemoveDesktop={handleRemoveDesktop}
+        onRenameDesktop={handleRenameDesktop}
         onAddWindow={handleAddWindow}
         isSidebarOpen={isSidebarOpen}
         sidebarPosition={sidebarPosition}
