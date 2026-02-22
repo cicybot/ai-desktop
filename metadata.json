@@ -1,0 +1,5 @@
+{
+  "name": "MacOS-like Web Desktop",
+  "description": "A web-based desktop environment supporting multiple workspaces, draggable iframe windows for ttyd and web previews, and persistent state.",
+  "requestFramePermissions": []
+}
