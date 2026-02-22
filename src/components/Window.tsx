@@ -63,56 +63,17 @@ export const Window: React.FC<WindowProps> = ({
   // 2. If not active, mask it so clicks activate the window instead of interacting with iframe content
   const showMask = isDragging || isResizing || !isActive;
 
-  return (
-    <motion.div
-      ref={nodeRef}
-      drag
-      dragListener={false}
-      dragControls={dragControls}
-      dragMomentum={false}
-      onDragStart={() => setIsDragging(true)}
-      onDragEnd={handleDragEnd}
-      initial={{ x: window.x, y: window.y }}
-      style={{
-        position: 'absolute',
-        x: window.x,
-        y: window.y,
-        zIndex: window.zIndex,
-        width: size.width,
-        height: size.height,
-      }}
-      className={cn(
-        "absolute flex flex-col bg-white/80 backdrop-blur-md rounded-lg shadow-2xl border border-white/20 overflow-hidden",
-        isActive ? "ring-1 ring-black/5 shadow-xl" : "opacity-90 shadow-md"
-      )}
-      onPointerDown={() => onFocus(window.id)}
-    >
-      <ResizableBox
-        width={size.width}
-        height={size.height}
-        minConstraints={[300, 200]}
-        maxConstraints={[1920, 1080]}
-        onResizeStart={() => setIsResizing(true)}
-        onResize={handleResize}
-        onResizeStop={handleResizeStop}
-        resizeHandles={['se', 's', 'e']}
-        handle={(h, ref) => {
-            const className = cn(
-                "absolute z-50 hover:bg-blue-500/20 transition-colors",
-                h === 's' && "bottom-0 left-0 right-0 h-2 cursor-s-resize -mb-1",
-                h === 'e' && "right-0 top-0 bottom-0 w-2 cursor-e-resize -mr-1",
-                h === 'se' && "bottom-0 right-0 w-5 h-5 cursor-se-resize z-50 -mr-1 -mb-1"
-            );
-            return <span className={className} ref={ref} />;
-        }}
-        className="flex flex-col w-full h-full"
-      >
+  const WindowContent = (
+    <div className="flex flex-col w-full h-full">
         {/* Title Bar */}
         <div
           className="h-9 bg-gray-200/80 border-b border-gray-300/50 flex items-center justify-between px-3 shrink-0 cursor-grab active:cursor-grabbing select-none"
           onPointerDown={(e) => {
-            dragControls.start(e);
+            if (!window.isMaximized) {
+                dragControls.start(e);
+            }
           }}
+          onDoubleClick={() => onMaximize(window.id)}
         >
             {/* Window Controls */}
             <div className="flex items-center gap-2 group z-50" onPointerDown={(e) => e.stopPropagation()}>
@@ -169,6 +130,76 @@ export const Window: React.FC<WindowProps> = ({
                 style={{ pointerEvents: showMask ? 'none' : 'auto' }}
             />
         </div>
+    </div>
+  );
+
+  if (window.isMaximized) {
+    return (
+        <motion.div
+            ref={nodeRef}
+            initial={false}
+            animate={{ x: 0, y: 0, width: '100%', height: '100%' }}
+            transition={{ duration: 0.2 }}
+            style={{
+                position: 'absolute',
+                zIndex: window.zIndex,
+                top: 0,
+                left: 0,
+            }}
+            className={cn(
+                "absolute flex flex-col bg-white/80 backdrop-blur-md shadow-none border-none overflow-hidden",
+                isActive ? "z-[50]" : "z-[10]"
+            )}
+            onPointerDown={() => onFocus(window.id)}
+        >
+            {WindowContent}
+        </motion.div>
+    );
+  }
+
+  return (
+    <motion.div
+      ref={nodeRef}
+      drag
+      dragListener={false}
+      dragControls={dragControls}
+      dragMomentum={false}
+      onDragStart={() => setIsDragging(true)}
+      onDragEnd={handleDragEnd}
+      initial={{ x: window.x, y: window.y }}
+      animate={{ x: window.x, y: window.y, width: size.width, height: size.height }}
+      transition={{ duration: 0 }}
+      style={{
+        position: 'absolute',
+        zIndex: window.zIndex,
+      }}
+      className={cn(
+        "absolute flex flex-col bg-white/80 backdrop-blur-md rounded-lg shadow-2xl border border-white/20 overflow-hidden",
+        isActive ? "ring-1 ring-black/5 shadow-xl" : "opacity-90 shadow-md"
+      )}
+      onPointerDown={() => onFocus(window.id)}
+    >
+      <ResizableBox
+        width={size.width}
+        height={size.height}
+        minConstraints={[300, 200]}
+        maxConstraints={[1920, 1080]}
+        onResizeStart={() => setIsResizing(true)}
+        onResize={handleResize}
+        onResizeStop={handleResizeStop}
+        resizeHandles={['se', 's', 'e']}
+        handle={(h, ref) => {
+            const className = cn(
+                "absolute z-50 hover:bg-blue-500/20 transition-colors",
+                h === 's' && "bottom-0 left-0 right-0 h-2 cursor-s-resize -mb-1",
+                h === 'e' && "right-0 top-0 bottom-0 w-2 cursor-e-resize -mr-1",
+                h === 'se' && "bottom-0 right-0 w-5 h-5 cursor-se-resize z-50 -mr-1 -mb-1"
+            );
+            return <span className={className} ref={ref} />;
+        }}
+        className="flex flex-col w-full h-full"
+      >
+        {WindowContent}
       </ResizableBox>
     </motion.div>
   );

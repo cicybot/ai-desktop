@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Terminal, Globe, Plus, RefreshCw, Monitor, Trash2, ChevronDown, Zap, Settings, LogOut, Sidebar as SidebarIcon, AlignLeft, AlignRight, Wifi, LayoutGrid } from 'lucide-react';
+import { Terminal, Globe, Plus, RefreshCw, Monitor, Trash2, ChevronDown, Zap, Settings, LogOut, Sidebar as SidebarIcon, AlignLeft, AlignRight, Wifi, LayoutGrid, User as UserIcon, Check } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { WindowType, DesktopState } from '../types';
+import { WindowType, DesktopState, User, PLANS } from '../types';
 
 interface TopBarProps {
   desktops: DesktopState[];
@@ -15,6 +15,10 @@ interface TopBarProps {
   onToggleSidebar: () => void;
   onSetSidebarPosition: (position: 'left' | 'right') => void;
   onLayoutGrid: () => void;
+  user: User | null;
+  onOpenLogin: () => void;
+  onLogout: () => void;
+  onUpgrade: (planId: 'free' | 'pro' | 'enterprise') => void;
 }
 
 function NetworkMonitor() {
@@ -64,6 +68,10 @@ export function TopBar({
   onToggleSidebar,
   onSetSidebarPosition,
   onLayoutGrid,
+  user,
+  onOpenLogin,
+  onLogout,
+  onUpgrade,
 }: TopBarProps) {
   const [activeMenu, setActiveMenu] = useState<'chats' | 'apps' | 'desktops' | 'settings' | null>(null);
   const [urlInput, setUrlInput] = useState('');
@@ -276,13 +284,15 @@ export function TopBar({
         <div className="w-px h-4 bg-[#2a2e35]" />
 
         {/* Grid Layout Button */}
-        <button 
-          onClick={onLayoutGrid}
-          className="hover:text-white transition-colors flex items-center justify-center"
-          title="Grid Layout"
-        >
-          <LayoutGrid size={18} />
-        </button>
+        {activeDesktop && activeDesktop.windows.length > 4 && (
+          <button 
+            onClick={onLayoutGrid}
+            className="hover:text-white transition-colors flex items-center justify-center"
+            title="Grid Layout"
+          >
+            <LayoutGrid size={18} />
+          </button>
+        )}
 
         {/* Sidebar Toggle */}
         <button 
@@ -346,9 +356,66 @@ export function TopBar({
           )}
         </div>
 
-        <button className="hover:text-white transition-colors flex items-center justify-center">
-            <LogOut size={18} />
-        </button>
+        {/* User Profile */}
+        <div className="relative flex items-center">
+            <button 
+            onClick={() => user ? toggleMenu('user') : onOpenLogin()}
+            className={cn(
+                "hover:text-white transition-colors flex items-center justify-center",
+                activeMenu === 'user' && "text-white"
+            )}
+            title={user ? user.name : "Sign In"}
+            >
+            {user && user.avatar ? (
+                <img src={user.avatar} alt={user.name} className="w-5 h-5 rounded-full" />
+            ) : (
+                <UserIcon size={18} className={cn(user ? "text-blue-400" : "")} />
+            )}
+            </button>
+
+            {activeMenu === 'user' && user && (
+            <div className="absolute top-full right-0 mt-2 w-64 bg-[#1c1f26] border border-[#2a2e35] rounded-lg shadow-xl overflow-hidden z-50 flex flex-col">
+                {/* User Info Header */}
+                <div className="p-4 border-b border-[#2a2e35]">
+                    <div className="font-bold text-white">{user.name}</div>
+                    <div className="text-xs text-gray-500">{user.email}</div>
+                    <div className="mt-2 text-xs bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded w-fit uppercase tracking-wider">{user.plan} Plan</div>
+                </div>
+                
+                {/* Plans */}
+                <div className="py-1 border-b border-[#2a2e35]">
+                    <div className="px-3 py-1 text-xs text-gray-500 uppercase tracking-wider">Switch Plan</div>
+                    {PLANS.map(plan => (
+                        <button
+                            key={plan.id}
+                            onClick={() => {
+                                onUpgrade(plan.id);
+                                setActiveMenu(null);
+                            }}
+                            className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-[#2a2e35] hover:text-white flex items-center justify-between group"
+                        >
+                            <span>{plan.name}</span>
+                            {user.plan === plan.id && <Check size={14} className="text-blue-400" />}
+                        </button>
+                    ))}
+                </div>
+
+                {/* Actions */}
+                <div className="py-1">
+                    <button 
+                        onClick={() => {
+                            onLogout();
+                            setActiveMenu(null);
+                        }}
+                        className="w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-[#2a2e35] hover:text-red-300 flex items-center gap-2"
+                    >
+                        <LogOut size={14} />
+                        <span>Log Out</span>
+                    </button>
+                </div>
+            </div>
+            )}
+        </div>
       </div>
 
     </div>

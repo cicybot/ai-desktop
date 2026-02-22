@@ -4,7 +4,8 @@ import { Dock } from './components/Dock';
 import { TopBar } from './components/TopBar';
 import { Sidebar } from './components/Sidebar';
 import { CentralPrompt } from './components/CentralPrompt';
-import { DesktopState, WindowState, WindowType, DEFAULT_TTYD_URL, Conversation, Message } from './types';
+import { LoginDialog } from './components/LoginDialog';
+import { DesktopState, WindowState, WindowType, DEFAULT_TTYD_URL, Conversation, Message, User } from './types';
 
 const STORAGE_KEY = 'macos-web-state-v1';
 
@@ -33,6 +34,10 @@ export default function App() {
   const [sidebarPosition, setSidebarPosition] = useState<'left' | 'right'>('right');
   const [conversations, setConversations] = useState<Conversation[]>([]);
 
+  // User State
+  const [user, setUser] = useState<User | null>(null);
+  const [isLoginOpen, setIsLoginOpen] = useState(false);
+
   // Load state from localStorage on mount
   useEffect(() => {
     const savedState = localStorage.getItem(STORAGE_KEY);
@@ -42,6 +47,9 @@ export default function App() {
         if (parsed.desktops && parsed.desktops.length > 0) {
           setDesktops(parsed.desktops);
           setActiveDesktopId(parsed.activeDesktopId || parsed.desktops[0].id);
+        }
+        if (parsed.user) {
+            setUser(parsed.user);
         }
       } catch (e) {
         console.error('Failed to load state', e);
@@ -54,9 +62,10 @@ export default function App() {
     const state = {
       desktops,
       activeDesktopId,
+      user,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [desktops, activeDesktopId]);
+  }, [desktops, activeDesktopId, user]);
 
   const activeDesktop = desktops.find((d) => d.id === activeDesktopId) || desktops[0];
   const activeConversationId = activeDesktop.activeConversationId;
@@ -180,6 +189,7 @@ export default function App() {
     const newId = generateId();
     const newConversation: Conversation = {
       id: newId,
+      desktopId: activeDesktopId,
       title: 'New Chat',
       messages: [],
       updatedAt: Date.now(),
@@ -190,6 +200,29 @@ export default function App() {
   };
 
   const handleSendMessage = (content: string) => {
+    // Check for commands
+    if (content.toLowerCase() === 'open terminal') {
+        handleAddWindow('ttyd');
+        return;
+    }
+    if (content.toLowerCase() === 'new browser' || content.toLowerCase() === 'open browser') {
+        handleAddWindow('preview', 'https://www.google.com/webhp?igu=1', 'Google');
+        return;
+    }
+    if (content.toLowerCase() === 'switch to desktop 2') {
+        if (desktops.length < 2) {
+            handleAddDesktop();
+        }
+        // Find the second desktop
+        const secondDesktop = desktops[1] || desktops[0]; // Fallback if add failed or async issue (though state update is batched usually, here we might need to wait, but for simplicity let's just try to switch if exists)
+        // Actually, since setState is async, we can't switch immediately if we just added it.
+        // But if it exists:
+        if (desktops.length >= 2) {
+             setActiveDesktopId(desktops[1].id);
+        }
+        return;
+    }
+
     let currentConversationId = activeConversationId;
     let newConversations = [...conversations];
 
@@ -197,6 +230,7 @@ export default function App() {
         const newId = generateId();
         const newConversation: Conversation = {
             id: newId,
+            desktopId: activeDesktopId,
             title: content.slice(0, 30) + (content.length > 30 ? '...' : ''),
             messages: [],
             updatedAt: Date.now(),
@@ -214,8 +248,25 @@ export default function App() {
     };
 
     setConversations(prev => {
-        const updated = prev.length === 0 ? newConversations : prev;
-        return updated.map(c => {
+        // If we created a new conversation locally, use that list as base, otherwise use prev
+        // But wait, if we created a new one, it's already in newConversations.
+        // However, prev might have changed? Unlikely in this synchronous block but good practice.
+        // Actually, if we created a new conversation, we need to make sure we don't lose it.
+        
+        // Simpler approach:
+        // If currentConversationId was null, we definitely created a new one.
+        // We need to add it to the state.
+        
+        let updatedConversations = prev;
+        if (!activeConversationId) {
+             // We created a new one
+             const newConv = newConversations.find(c => c.id === currentConversationId);
+             if (newConv) {
+                 updatedConversations = [newConv, ...prev];
+             }
+        }
+
+        return updatedConversations.map(c => {
             if (c.id === currentConversationId) {
                 return {
                     ...c,
@@ -248,45 +299,117 @@ export default function App() {
 
   // Check if we should show the central prompt
   // Show if:
-  // 1. No active conversation for this desktop OR
-  // 2. Active conversation has 0 messages
-  const showCentralPrompt = !activeConversation || activeConversation.messages.length === 0;
+  // 1. No windows on the active desktop
+  // 2. No conversation history for THIS desktop
+  const activeDesktopConversations = conversations.filter(c => c.desktopId === activeDesktopId);
+  const showCentralPrompt = activeDesktop.windows.length === 0 && activeDesktopConversations.length === 0;
 
   const handleLayoutGrid = () => {
     const windows = activeDesktop.windows;
-    if (windows.length === 0) return;
-
     const count = windows.length;
-    const cols = Math.ceil(Math.sqrt(count));
-    const rows = Math.ceil(count / cols);
+    if (count === 0) return;
     
-    // Calculate available space (subtract dock and topbar)
-    // TopBar is 48px (h-12)
-    // Dock is roughly 80px (h-16 + padding) - let's assume 100px bottom margin
-    const availableWidth = window.innerWidth;
-    const availableHeight = window.innerHeight - 48 - 100; 
+    // Calculate available space
+    const topBarHeight = 48;
+    const dockHeight = 96; // Approx
+    const gap = 8;
+    const outerMargin = 16;
+    const sidebarWidth = isSidebarOpen ? 320 : 0;
     
-    const width = Math.floor(availableWidth / cols);
-    const height = Math.floor(availableHeight / rows);
+    const availableWidth = window.innerWidth - sidebarWidth - (outerMargin * 2);
+    const availableHeight = window.innerHeight - topBarHeight - dockHeight - outerMargin; 
+
+    // Find optimal grid dimensions
+    // We want the cell aspect ratio to be close to 16:9 (1.77) or at least > 1
+    let bestCols = 1;
+    let bestRows = 1;
+    let bestScore = Infinity;
+
+    for (let cols = 1; cols <= count; cols++) {
+        const rows = Math.ceil(count / cols);
+        const cellWidth = availableWidth / cols;
+        const cellHeight = availableHeight / rows;
+        const ratio = cellWidth / cellHeight;
+        
+        // We prefer landscape windows, so ratio around 1.6 is good.
+        // We penalize very narrow or very flat windows.
+        const targetRatio = 1.6;
+        const score = Math.abs(ratio - targetRatio);
+        
+        if (score < bestScore) {
+            bestScore = score;
+            bestCols = cols;
+            bestRows = rows;
+        }
+    }
 
     setDesktops(prev => prev.map(d => {
         if (d.id !== activeDesktopId) return d;
         
+        // Create a copy of windows to sort or maintain order? 
+        // Let's maintain current z-index order or just ID order?
+        // Usually users expect visual order to be somewhat stable, but for now let's just iterate.
+        // To make it stable, we might want to sort by current X/Y position?
+        // Let's sort by Y then X to keep "top-left" windows at the start.
+        const sortedWindows = [...d.windows].sort((a, b) => {
+            if (Math.abs(a.y - b.y) > 50) return a.y - b.y; // Row major-ish
+            return a.x - b.x;
+        });
+
+        const newWindows = d.windows.map(w => w); // Clone
+        
+        let windowIndex = 0;
+        for (let r = 0; r < bestRows; r++) {
+            // How many windows in this row?
+            // If it's the last row, it takes the remainder.
+            // But wait, if we have N=5, Cols=3. Rows=2.
+            // Row 0: 3 windows.
+            // Row 1: 2 windows.
+            // We want the last row to fill the width? Or stay grid aligned?
+            // "Fill width" looks better usually.
+            
+            const remainingWindows = count - windowIndex;
+            const isLastRow = r === bestRows - 1;
+            
+            // Standard grid approach:
+            // const colsInRow = bestCols;
+            
+            // "Fill last row" approach:
+            // If we are at the last row, distribute remaining windows evenly.
+            // However, if the grid is 4x2 and we have 5 windows (4 in row 1, 1 in row 2),
+            // the single window in row 2 being super wide might look weird.
+            // Let's stick to "Fill width" for now as requested "regular" but "experience good".
+            
+            const colsInRow = (isLastRow && remainingWindows < bestCols) ? remainingWindows : bestCols;
+            
+            const rowHeight = (availableHeight - ((bestRows - 1) * gap)) / bestRows;
+            const widthPerWindow = (availableWidth - ((colsInRow - 1) * gap)) / colsInRow;
+
+            for (let c = 0; c < colsInRow; c++) {
+                if (windowIndex >= count) break;
+                
+                const targetWindow = sortedWindows[windowIndex];
+                const originalIndex = d.windows.findIndex(w => w.id === targetWindow.id);
+                
+                if (originalIndex !== -1) {
+                    newWindows[originalIndex] = {
+                        ...newWindows[originalIndex],
+                        x: outerMargin + (c * (widthPerWindow + gap)),
+                        y: topBarHeight + outerMargin + (r * (rowHeight + gap)),
+                        width: widthPerWindow,
+                        height: rowHeight,
+                        isMaximized: false,
+                        isMinimized: false
+                    };
+                }
+                
+                windowIndex++;
+            }
+        }
+
         return {
             ...d,
-            windows: d.windows.map((w, index) => {
-                const row = Math.floor(index / cols);
-                const col = index % cols;
-                return {
-                    ...w,
-                    x: col * width,
-                    y: 48 + (row * height), // Start below TopBar
-                    width: width - 4, // Gap
-                    height: height - 4, // Gap
-                    isMaximized: false,
-                    isMinimized: false
-                };
-            })
+            windows: newWindows
         };
     }));
   };
@@ -305,6 +428,17 @@ export default function App() {
         onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
         onSetSidebarPosition={setSidebarPosition}
         onLayoutGrid={handleLayoutGrid}
+        user={user}
+        onOpenLogin={() => setIsLoginOpen(true)}
+        onLogout={() => {
+            setUser(null);
+            setIsLoginOpen(false);
+        }}
+        onUpgrade={(planId) => {
+            if (user) {
+                setUser({ ...user, plan: planId });
+            }
+        }}
       />
       
       <div className="flex-1 flex overflow-hidden relative">
@@ -313,7 +447,7 @@ export default function App() {
             <Sidebar
                 isOpen={isSidebarOpen}
                 position="left"
-                conversations={conversations}
+                conversations={activeDesktopConversations}
                 activeConversationId={activeConversationId}
                 onNewConversation={handleNewConversation}
                 onSelectConversation={setActiveConversationId}
@@ -355,7 +489,7 @@ export default function App() {
             <Sidebar
                 isOpen={isSidebarOpen}
                 position="right"
-                conversations={conversations}
+                conversations={activeDesktopConversations}
                 activeConversationId={activeConversationId}
                 onNewConversation={handleNewConversation}
                 onSelectConversation={setActiveConversationId}
@@ -364,6 +498,25 @@ export default function App() {
             />
         )}
       </div>
+
+      <LoginDialog 
+        isOpen={isLoginOpen}
+        onClose={() => setIsLoginOpen(false)}
+        user={user}
+        onLogin={(u) => {
+            setUser(u);
+            setIsLoginOpen(false);
+        }}
+        onLogout={() => {
+            setUser(null);
+            setIsLoginOpen(false);
+        }}
+        onUpgrade={(planId) => {
+            if (user) {
+                setUser({ ...user, plan: planId });
+            }
+        }}
+      />
     </div>
   );
 }

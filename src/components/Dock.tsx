@@ -15,7 +15,7 @@ export function Dock({ windows, activeWindowId, onAddWindow, onActivateWindow }:
   if (windows.length === 0) return null;
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 h-16 z-[100] flex justify-center items-end group pointer-events-none">
+    <div className="absolute bottom-0 left-0 right-0 h-16 z-[100] flex justify-center items-end group pointer-events-none">
       {/* Trigger zone */}
       <div className="absolute bottom-0 w-full h-4 pointer-events-auto" />
       
