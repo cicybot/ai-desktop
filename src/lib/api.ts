@@ -1,20 +1,36 @@
-const API_BASE = '/api';
-const GLOBAL_API_TOKEN = '1116568a729f18c9903038ff71e70aa1685888d9e8f4ca34419b9a5d9cf784ffdf1';
+import axios from 'axios';
+
+const API_BASE = 'https://g-fast-api.cicy.de5.net/api';
 
 const getAuthToken = (): string => {
   const params = new URLSearchParams(window.location.search);
   const urlToken = params.get('token');
   if (urlToken) {
-    localStorage.setItem('auth_token', urlToken);
+    localStorage.setItem('token', urlToken);
     window.history.replaceState({}, '', window.location.pathname);
     return urlToken;
   }
-  return localStorage.getItem('auth_token') || GLOBAL_API_TOKEN;
+  return localStorage.getItem('token') || '';
 };
 
 export const setAuthToken = (token: string) => {
-  localStorage.setItem('auth_token', token);
+  localStorage.setItem('token', token);
 };
+
+const api = axios.create({
+  baseURL: API_BASE,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+api.interceptors.request.use((config) => {
+  const token = getAuthToken();
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
 
 export interface Group {
   id: number;
@@ -49,94 +65,164 @@ export interface PaneLayoutItem {
   z_index: number;
 }
 
-async function fetchApi<T>(url: string, options?: RequestInit): Promise<T> {
-  const token = getAuthToken();
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-  
-  const response = await fetch(`${API_BASE}${url}`, {
-    ...options,
-    headers: {
-      ...headers,
-      ...options?.headers,
-    },
-  });
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Request failed' }));
-    throw new Error(error.detail || `HTTP ${response.status}`);
-  }
-  return response.json();
+export interface TmuxCreateRequest {
+  win_name?: string | null;
+  dev?: boolean;
+  workspace?: string | null;
+  init_script?: string;
+  use_local_ip?: boolean;
+  title?: string | null;
+  proxy?: string | null;
+  tg_token?: string | null;
+  tg_chat_id?: string | null;
+  tg_enable?: boolean;
 }
 
 export const authApi = {
-  getUser: () => fetchApi<{ id: number; email: string; name: string; avatar: string }>('/auth/me'),
-  login: (token: string) => {
-    setAuthToken(token);
-    return authApi.getUser();
+  verify: async () => {
+    const { data } = await api.get('/auth/verify');
+    return data;
   },
   logout: () => {
-    localStorage.removeItem('auth_token');
+    localStorage.removeItem('token');
   },
 };
 
 export const groupsApi = {
-  list: () => fetchApi<{ groups: Group[] }>('/groups'),
+  list: async () => {
+    const { data } = await api.get<{ groups: Group[] }>('/groups');
+    return data;
+  },
 
-  create: (name: string, description?: string) =>
-    fetchApi<Group>('/groups', {
-      method: 'POST',
-      body: JSON.stringify({ name, description }),
-    }),
+  create: async (name: string, description?: string) => {
+    const { data } = await api.post<Group>('/groups', { name, description });
+    return data;
+  },
 
-  get: (groupId: number) =>
-    fetchApi<GroupWithPanes>(`/groups/${groupId}`),
+  get: async (groupId: number) => {
+    const { data } = await api.get<GroupWithPanes>(`/groups/${groupId}`);
+    return data;
+  },
 
-  update: (groupId: number, name?: string, description?: string) =>
-    fetchApi<{ success: boolean; group_id: number; updated: object }>(`/groups/${groupId}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ name, description }),
-    }),
+  update: async (groupId: number, name?: string, description?: string) => {
+    const { data } = await api.patch<{ success: boolean; group_id: number; updated: object }>(`/groups/${groupId}`, { name, description });
+    return data;
+  },
 
-  delete: (groupId: number) =>
-    fetchApi<{ success: boolean; group_id: number }>(`/groups/${groupId}`, {
-      method: 'DELETE',
-    }),
+  delete: async (groupId: number) => {
+    const { data } = await api.delete<{ success: boolean; group_id: number }>(`/groups/${groupId}`);
+    return data;
+  },
 
-  addPane: (groupId: number, paneId: string) =>
-    fetchApi<{ success: boolean; group_id: number; pane_id: string }>(
-      `/groups/${groupId}/panes/${paneId}`,
-      { method: 'POST' }
-    ),
+  addPane: async (groupId: number, paneId: string) => {
+    const { data } = await api.post<{ success: boolean; group_id: number; pane_id: string }>(`/groups/${groupId}/panes/${paneId}`);
+    return data;
+  },
 
-  removePane: (groupId: number, paneId: string) =>
-    fetchApi<{ success: boolean; group_id: number; pane_id: string }>(
-      `/groups/${groupId}/panes/${paneId}`,
-      { method: 'DELETE' }
-    ),
+  removePane: async (groupId: number, paneId: string) => {
+    const { data } = await api.delete<{ success: boolean; group_id: number; pane_id: string }>(`/groups/${groupId}/panes/${paneId}`);
+    return data;
+  },
 
-  updatePaneLayout: (
+  updatePaneLayout: async (
     groupId: number,
     paneId: string,
     layout: { pos_x?: number; pos_y?: number; width?: number; height?: number; z_index?: number }
-  ) =>
-    fetchApi<{ success: boolean; group_id: number; pane_id: string }>(
-      `/groups/${groupId}/panes/${paneId}/layout`,
-      {
-        method: 'PATCH',
-        body: JSON.stringify(layout),
-      }
-    ),
+  ) => {
+    const { data } = await api.patch<{ success: boolean; group_id: number; pane_id: string }>(`/groups/${groupId}/panes/${paneId}/layout`, layout);
+    return data;
+  },
 
-  batchUpdateLayout: (groupId: number, panes: PaneLayoutItem[]) =>
-    fetchApi<{ success: boolean; group_id: number; updated: number }>(
-      `/groups/${groupId}/layout`,
-      {
-        method: 'PATCH',
-        body: JSON.stringify({ panes }),
-      }
-    ),
+  batchUpdateLayout: async (groupId: number, panes: PaneLayoutItem[]) => {
+    const { data } = await api.patch<{ success: boolean; group_id: number; updated: number }>(`/groups/${groupId}/layout`, { panes });
+    return data;
+  },
+};
+
+export const tmuxApi = {
+  create: async (params: TmuxCreateRequest) => {
+    const { data } = await api.post('/tmux/create', params);
+    return data;
+  },
+
+  list: async () => {
+    const { data } = await api.get('/tmux-list');
+    return data;
+  },
+
+  getPane: async (paneId: string) => {
+    const { data } = await api.get(`/tmux/panes/${paneId}`);
+    return data;
+  },
+
+  deletePane: async (paneId: string) => {
+    const { data } = await api.delete(`/tmux/panes/${paneId}`);
+    return data;
+  },
+
+  restartPane: async (paneId: string) => {
+    const { data } = await api.post(`/tmux/panes/${paneId}/restart`);
+    return data;
+  },
+
+  renamePane: async (paneId: string, title: string) => {
+    const { data } = await api.patch(`/tmux/panes/${paneId}`, { title });
+    return data;
+  },
+
+  send: async (paneId: string, command: string) => {
+    const { data } = await api.post('/tmux/send', { pane_id: paneId, command });
+    return data;
+  },
+
+  clear: async (paneId: string) => {
+    const { data } = await api.post('/tmux/clear', { pane_id: paneId });
+    return data;
+  },
+};
+
+export const appsApi = {
+  list: async () => {
+    const { data } = await api.get<{ apps: { id: number; name: string; url: string; icon: string }[] }>('/apps');
+    return data;
+  },
+  create: async (name: string, url: string, icon?: string) => {
+    const { data } = await api.post('/apps', { name, url, icon });
+    return data;
+  },
+  update: async (id: number, updates: { name?: string; url?: string; icon?: string }) => {
+    const { data } = await api.patch(`/apps/${id}`, updates);
+    return data;
+  },
+  delete: async (id: number) => {
+    const { data } = await api.delete(`/apps/${id}`);
+    return data;
+  },
+};
+
+export const ttydApi = {
+  start: async (paneId: string) => {
+    const { data } = await api.post(`/ttyd/start/${paneId}`);
+    return data;
+  },
+
+  status: async (paneId: string) => {
+    const { data } = await api.get(`/ttyd/status/${paneId}`);
+    return data;
+  },
+
+  config: async (paneId: string) => {
+    const { data } = await api.get(`/ttyd/config/${paneId}`);
+    return data;
+  },
+
+  list: async () => {
+    const { data } = await api.get('/ttyd/list');
+    return data;
+  },
+
+  getByName: async (name: string) => {
+    const { data } = await api.get(`/ttyd/by-name/${name}`);
+    return data;
+  },
 };

@@ -74,4 +74,9 @@ export const PLANS: Plan[] = [
   }
 ];
 
-export const DEFAULT_TTYD_URL = "http://ttyd-proxy.cicy.de5.net/ttyd/main.0/?token=";
+export const DEFAULT_TTYD_URL = "https://ttyd-proxy.cicy.de5.net/ttyd/";
+
+export const getTtydUrl = (paneId: string): string => {
+  const token = localStorage.getItem('token') || '';
+  return `${DEFAULT_TTYD_URL}${encodeURIComponent(paneId)}/?token=${token}`;
+};

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, useDragControls } from 'motion/react';
 import { ResizableBox, ResizeCallbackData } from 'react-resizable';
-import { X, Minus, Maximize2, Minimize2 } from 'lucide-react';
+import { X, Minus, Maximize2, Minimize2, ExternalLink, RotateCw } from 'lucide-react';
 import { WindowState } from '../types';
 import { cn } from '../lib/utils';
 import 'react-resizable/css/styles.css';
@@ -27,6 +27,8 @@ export const Window: React.FC<WindowProps> = ({
 }) => {
   const [isResizing, setIsResizing] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(window.title);
   const [size, setSize] = useState({ width: window.width, height: window.height });
   const dragControls = useDragControls();
   const nodeRef = useRef<HTMLDivElement>(null);
@@ -67,49 +69,88 @@ export const Window: React.FC<WindowProps> = ({
     <div className="flex flex-col w-full h-full">
         {/* Title Bar */}
         <div
-          className="h-9 bg-gray-200/80 border-b border-gray-300/50 flex items-center justify-between px-3 shrink-0 cursor-grab active:cursor-grabbing select-none"
+          className={`h-9 bg-gray-200/80 border-b border-gray-300/50 flex items-center justify-between px-3 shrink-0 select-none ${isDragging ? 'cursor-move' : 'cursor-grab active:cursor-move'}`}
           onPointerDown={(e) => {
             if (!window.isMaximized) {
                 dragControls.start(e);
             }
           }}
-          onDoubleClick={() => onMaximize(window.id)}
+          onDoubleClick={undefined}
         >
             {/* Window Controls */}
-            <div className="flex items-center gap-2 group z-50" onPointerDown={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-0 group z-50" onPointerDown={(e) => e.stopPropagation()}>
                 <button 
                     onClick={() => onClose(window.id)}
-                    className="w-3 h-3 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center text-black/0 hover:text-black/50 transition-colors shadow-sm"
+                    className="p-1.5 flex items-center justify-center cursor-pointer"
                 >
-                    <X size={8} strokeWidth={3} />
+                    <span className="w-3 h-3 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center text-black/0 hover:text-black/50 transition-colors shadow-sm"><X size={8} strokeWidth={3} /></span>
                 </button>
                 <button 
                     onClick={() => onMinimize(window.id)}
-                    className="w-3 h-3 rounded-full bg-yellow-500 hover:bg-yellow-600 flex items-center justify-center text-black/0 hover:text-black/50 transition-colors shadow-sm"
+                    className="p-1.5 flex items-center justify-center cursor-pointer"
                 >
-                    <Minus size={8} strokeWidth={3} />
+                    <span className="w-3 h-3 rounded-full bg-yellow-500 hover:bg-yellow-600 flex items-center justify-center text-black/0 hover:text-black/50 transition-colors shadow-sm"><Minus size={8} strokeWidth={3} /></span>
                 </button>
                 <button 
                     onClick={() => onMaximize(window.id)}
-                    className="w-3 h-3 rounded-full bg-green-500 hover:bg-green-600 flex items-center justify-center text-black/0 hover:text-black/50 transition-colors shadow-sm"
+                    className="p-1.5 flex items-center justify-center cursor-pointer"
                 >
-                    {window.isMaximized ? <Minimize2 size={8} strokeWidth={3} /> : <Maximize2 size={8} strokeWidth={3} />}
+                    <span className="w-3 h-3 rounded-full bg-green-500 hover:bg-green-600 flex items-center justify-center text-black/0 hover:text-black/50 transition-colors shadow-sm">{window.isMaximized ? <Minimize2 size={8} strokeWidth={3} /> : <Maximize2 size={8} strokeWidth={3} />}</span>
                 </button>
             </div>
 
             {/* Address Bar / Title */}
+            {window.type === 'ttyd' ? (
+            editingTitle ? (
+            <input
+                type="text"
+                value={titleDraft}
+                onChange={e => setTitleDraft(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') { onUpdate(window.id, { title: titleDraft }); setEditingTitle(false); } if (e.key === 'Escape') setEditingTitle(false); }}
+                onBlur={() => { onUpdate(window.id, { title: titleDraft }); setEditingTitle(false); }}
+                onPointerDown={e => e.stopPropagation()}
+                className="flex-1 mx-4 bg-white text-xs text-center px-2 py-0.5 rounded border border-blue-400/50 outline-none"
+                autoFocus
+            />
+            ) : (
+            <div className="flex-1 text-center text-xs text-gray-500 truncate" onDoubleClick={() => { setTitleDraft(window.title); setEditingTitle(true); }}>{window.title}</div>
+            )
+            ) : (
             <div className="flex-1 mx-4 flex justify-center items-center">
                 <input 
                     type="text" 
                     value={window.url}
                     onChange={(e) => onUpdate(window.id, { url: e.target.value })}
+                    onFocus={(e) => { e.target.dataset.focused = 'true'; e.target.value = window.url; }}
+                    onBlur={(e) => { e.target.dataset.focused = ''; try { e.target.value = new URL(window.url).hostname; } catch {} }}
+                    ref={(el) => { if (el && el.dataset.focused !== 'true') try { el.value = new URL(window.url).hostname; } catch {} }}
                     onPointerDown={(e) => e.stopPropagation()}
                     className="w-full max-w-md bg-white/50 hover:bg-white/80 focus:bg-white text-xs text-center focus:text-left px-2 py-0.5 rounded transition-colors outline-none border border-transparent focus:border-blue-400/50 placeholder-gray-400 truncate cursor-text"
                     placeholder="Enter URL..."
                 />
             </div>
+            )}
             
-            <div className="w-10" /> {/* Spacer */}
+            <div className="flex items-center gap-1">
+                {window.type !== 'ttyd' && (
+                <button
+                    onClick={() => { const iframe = document.querySelector<HTMLIFrameElement>(`iframe[title="${window.title}"]`); if (iframe) iframe.src = iframe.src; }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    className="p-1 hover:bg-black/10 rounded transition-colors"
+                    title="Reload"
+                >
+                    <RotateCw size={12} className="text-gray-500" />
+                </button>
+                )}
+                <button
+                    onClick={() => globalThis.open(window.url, '_blank')}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    className="p-1 hover:bg-black/10 rounded transition-colors"
+                    title="Open in new window"
+                >
+                    <ExternalLink size={12} className="text-gray-500" />
+                </button>
+            </div>
         </div>
 
         {/* Content */}

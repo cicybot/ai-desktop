@@ -1,12 +1,13 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Desktop } from './components/Desktop';
 import { Dock } from './components/Dock';
 import { TopBar } from './components/TopBar';
 import { Sidebar } from './components/Sidebar';
 import { CentralPrompt } from './components/CentralPrompt';
 import { LoginDialog } from './components/LoginDialog';
-import { DesktopState, WindowState, WindowType, DEFAULT_TTYD_URL, Conversation, Message, User } from './types';
-import { groupsApi, authApi, Group } from './lib/api';
+import { DesktopState, WindowState, WindowType, getTtydUrl, Conversation, Message, User } from './types';
+import { groupsApi, authApi, Group, tmuxApi, ttydApi } from './lib/api';
+import { DesktopAgent, AgentAction } from './lib/agent';
 
 const STORAGE_KEY = 'macos-web-state-v1';
 
@@ -26,19 +27,11 @@ const generateId = () => {
   return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 };
 
-const groupToDesktop = (group: Group): DesktopState => ({
-  id: `desktop-${group.id}`,
-  groupId: group.id,
-  name: group.name,
-  windows: [],
-  wallpaper: 'default',
-  activeConversationId: null,
-});
-
 export default function App() {
   const [desktops, setDesktops] = useState<DesktopState[]>([DEFAULT_DESKTOP]);
   const [activeDesktopId, setActiveDesktopId] = useState<string>('desktop-1');
   const [activeWindowId, setActiveWindowId] = useState<string | null>(null);
+  const [globalLoading, setGlobalLoading] = useState<string | false>(false);
   const [isLoading, setIsLoading] = useState(true);
   
   // Sidebar State
@@ -49,25 +42,108 @@ export default function App() {
   // User State
   const [user, setUser] = useState<User | null>(null);
   const [isLoginOpen, setIsLoginOpen] = useState(false);
+  const [agentStatus, setAgentStatus] = useState<'connected' | 'disconnected' | 'connecting'>('disconnected');
+  const agentRef = useRef<DesktopAgent | null>(null);
+  // 用 ref 存最新的 handler，避免 WS 回调闭包问题
+  const actionHandlerRef = useRef<(action: AgentAction) => void>(() => {});
 
-  // Load state from API on mount
+  // Check auth first, then load state
   useEffect(() => {
-    const loadState = async () => {
+    const init = async () => {
+      // 1. 检查 URL 或 localStorage 中的 token
+      const params = new URLSearchParams(window.location.search);
+      const urlToken = params.get('token');
+      if (urlToken) {
+        localStorage.setItem('token', urlToken);
+        window.history.replaceState({}, '', window.location.pathname);
+      }
+
+      const savedToken = localStorage.getItem('token');
+      if (!savedToken) {
+        setIsLoading(false);
+        setIsLoginOpen(true);
+        return;
+      }
+
+      // 2. 验证 token
       try {
-        const response = await groupsApi.list();
-        if (response.groups && response.groups.length > 0) {
-          const loadedDesktops = response.groups.map(groupToDesktop);
+        const result = await authApi.verify();
+        if (!result.valid) {
+          localStorage.removeItem('token');
+          setIsLoading(false);
+          setIsLoginOpen(true);
+          return;
+        }
+        setUser({
+          id: 'u-token',
+          name: 'Admin',
+          email: '',
+          avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=admin`,
+          plan: 'pro',
+        });
+      } catch {
+        localStorage.removeItem('token');
+        setIsLoading(false);
+        setIsLoginOpen(true);
+        return;
+      }
+
+      // 3. Token 有效，加载桌面数据
+      try {
+        const [groupsRes, ttydRes] = await Promise.all([
+          groupsApi.list(),
+          ttydApi.list(),
+        ]);
+        const ttydMap = new Map<string, { title: string; ttyd_port: number }>();
+        if (ttydRes.configs) {
+          for (const c of ttydRes.configs) {
+            ttydMap.set(c.pane_id, { title: c.title, ttyd_port: c.ttyd_port });
+          }
+        }
+
+        if (groupsRes.groups && groupsRes.groups.length > 0) {
+          const loadedDesktops: DesktopState[] = await Promise.all(
+            groupsRes.groups.map(async (group: Group) => {
+              try {
+                const detail = await groupsApi.get(group.id);
+                const windows: WindowState[] = (detail.panes || []).map((p: any) => {
+                  const ttyd = ttydMap.get(p.pane_id);
+                  return {
+                    id: p.pane_id,
+                    type: 'ttyd' as WindowType,
+                    title: ttyd?.title || p.pane_id,
+                    url: getTtydUrl(p.pane_id),
+                    x: p.pos_x || 100,
+                    y: p.pos_y || 100,
+                    width: p.width || 800,
+                    height: p.height || 600,
+                    zIndex: p.z_index || 1,
+                    isMinimized: false,
+                    isMaximized: false,
+                  };
+                });
+                return {
+                  id: `desktop-${group.id}`,
+                  groupId: group.id,
+                  name: group.name,
+                  windows,
+                  wallpaper: 'default',
+                  activeConversationId: null,
+                };
+              } catch {
+                return {
+                  id: `desktop-${group.id}`,
+                  groupId: group.id,
+                  name: group.name,
+                  windows: [],
+                  wallpaper: 'default',
+                  activeConversationId: null,
+                };
+              }
+            })
+          );
           setDesktops(loadedDesktops);
           setActiveDesktopId(loadedDesktops[0].id);
-        } else {
-          const savedState = localStorage.getItem(STORAGE_KEY);
-          if (savedState) {
-            const parsed = JSON.parse(savedState);
-            if (parsed.desktops && parsed.desktops.length > 0) {
-              setDesktops(parsed.desktops);
-              setActiveDesktopId(parsed.activeDesktopId || parsed.desktops[0].id);
-            }
-          }
         }
       } catch (e) {
         console.error('Failed to load from API, falling back to localStorage', e);
@@ -87,37 +163,7 @@ export default function App() {
         setIsLoading(false);
       }
     };
-    loadState();
-  }, []);
-
-  // Check auth and get user info
-  useEffect(() => {
-    const checkAuth = async () => {
-      const params = new URLSearchParams(window.location.search);
-      const token = params.get('token');
-      if (token) {
-        localStorage.setItem('auth_token', token);
-        window.history.replaceState({}, '', window.location.pathname);
-      }
-      
-      const savedToken = localStorage.getItem('auth_token');
-      if (savedToken) {
-        try {
-          const userInfo = await authApi.getUser();
-          setUser({
-            id: String(userInfo.id),
-            name: userInfo.name,
-            email: userInfo.email,
-            avatar: userInfo.avatar,
-            plan: 'free',
-          });
-        } catch (e) {
-          console.error('Auth failed:', e);
-          localStorage.removeItem('auth_token');
-        }
-      }
-    };
-    checkAuth();
+    init();
   }, []);
 
   // Save state to localStorage on change
@@ -135,39 +181,93 @@ export default function App() {
   const activeConversationId = activeDesktop.activeConversationId;
   const activeConversation = conversations.find(c => c.id === activeConversationId);
 
-  const handleAddWindow = async (type: WindowType, url?: string, title?: string) => {
+  const handleAddWindow = async (type: WindowType, url?: string, title?: string, paneId?: string) => {
     if (!activeDesktop.groupId) return;
-    
-    const maxZ = Math.max(0, ...activeDesktop.windows.map(w => w.zIndex));
-    const windowId = generateId();
-    const newWindow: WindowState = {
-      id: windowId,
-      type,
-      title: title || (type === 'ttyd' ? 'Terminal' : 'New Window'),
-      url: url || (type === 'ttyd' ? DEFAULT_TTYD_URL : 'https://www.google.com/webhp?igu=1'),
-      x: 100 + (activeDesktop.windows.length * 20),
-      y: 100 + (activeDesktop.windows.length * 20),
-      width: 800,
-      height: 600,
-      zIndex: maxZ + 1,
-      isMinimized: false,
-      isMaximized: false,
-    };
 
-    try {
-      await groupsApi.addPane(activeDesktop.groupId, windowId);
-    } catch (e) {
-      console.error('Failed to add pane to API:', e);
+    // Dedup: if same paneId or same url already on this desktop, just focus it
+    const existing = activeDesktop.windows.find(w =>
+      (paneId && w.id === paneId) || (type !== 'ttyd' && url && w.url === url)
+    );
+    if (existing) {
+      const maxZ = Math.max(0, ...activeDesktop.windows.map(w => w.zIndex));
+      setActiveWindowId(existing.id);
+      handleUpdateWindow(existing.id, { isMinimized: false, zIndex: maxZ + 1 });
+      return;
     }
 
-    setDesktops((prev) =>
-      prev.map((d) =>
-        d.id === activeDesktopId
-          ? { ...d, windows: [...d.windows, newWindow] }
-          : d
-      )
-    );
-    setActiveWindowId(newWindow.id);
+    const maxZ = Math.max(0, ...activeDesktop.windows.map(w => w.zIndex));
+
+    if (type === 'ttyd') {
+      try {
+        let finalPaneId = paneId;
+        let finalTitle = title || 'Terminal';
+        if (!finalPaneId) {
+          setGlobalLoading('Creating agent...');
+          await new Promise(r => setTimeout(r, 0));
+          try {
+            const result = await tmuxApi.create({ title: finalTitle });
+            finalPaneId = result.pane_id;
+            finalTitle = result.title || finalTitle;
+          } finally {
+            setGlobalLoading(false);
+          }
+        }
+        await groupsApi.addPane(activeDesktop.groupId, finalPaneId);
+        const newWindow: WindowState = {
+          id: finalPaneId,
+          type,
+          title: finalTitle,
+          url: getTtydUrl(finalPaneId),
+          x: 20 + (activeDesktop.windows.length * 30),
+          y: 20 + (activeDesktop.windows.length * 30),
+          width: 1050,
+          height: 700,
+          zIndex: maxZ + 1,
+          isMinimized: false,
+          isMaximized: false,
+        };
+        setDesktops((prev) =>
+          prev.map((d) =>
+            d.id === activeDesktopId ? { ...d, windows: [...d.windows, newWindow] } : d
+          )
+        );
+        setActiveWindowId(newWindow.id);
+      } catch (e) {
+        console.error('Failed to create terminal:', e);
+      }
+    } else {
+      setGlobalLoading('Opening app...');
+      await new Promise(r => setTimeout(r, 0));
+      try {
+        const windowId = generateId();
+        const newWindow: WindowState = {
+          id: windowId,
+          type,
+          title: title || 'New Window',
+          url: url || 'https://www.google.com/webhp?igu=1',
+          x: 20 + (activeDesktop.windows.length * 30),
+          y: 20 + (activeDesktop.windows.length * 30),
+          width: 1050,
+          height: 700,
+          zIndex: maxZ + 1,
+          isMinimized: false,
+          isMaximized: false,
+        };
+        try {
+          await groupsApi.addPane(activeDesktop.groupId, windowId);
+        } catch (e) {
+          console.error('Failed to add pane to API:', e);
+        }
+        setDesktops((prev) =>
+          prev.map((d) =>
+            d.id === activeDesktopId ? { ...d, windows: [...d.windows, newWindow] } : d
+          )
+        );
+        setActiveWindowId(newWindow.id);
+      } finally {
+        setGlobalLoading(false);
+      }
+    }
   };
 
   const handleUpdateWindow = async (id: string, updates: Partial<WindowState>) => {
@@ -234,14 +334,9 @@ export default function App() {
   };
 
   const handleCloseWindow = async (id: string) => {
-    if (activeDesktop.groupId) {
-      try {
-        await groupsApi.removePane(activeDesktop.groupId, id);
-      } catch (e) {
-        console.error('Failed to remove pane from API:', e);
-      }
-    }
-    
+    const win = activeDesktop.windows.find(w => w.id === id);
+
+    // Remove from UI immediately
     setDesktops((prev) =>
       prev.map((d) =>
         d.id === activeDesktopId
@@ -249,8 +344,14 @@ export default function App() {
           : d
       )
     );
-    if (activeWindowId === id) {
-      setActiveWindowId(null);
+    if (activeWindowId === id) setActiveWindowId(null);
+
+    // API cleanup in background
+    if (activeDesktop.groupId) {
+      groupsApi.removePane(activeDesktop.groupId, id).catch(() => {});
+    }
+    if (win?.type === 'ttyd') {
+      tmuxApi.deletePane(id).catch(() => {});
     }
   };
 
@@ -268,6 +369,8 @@ export default function App() {
 
   const handleAddDesktop = async () => {
     const name = `Desktop ${desktops.length + 1}`;
+    setGlobalLoading('Creating desktop...');
+    await new Promise(r => setTimeout(r, 0));
     try {
       const group = await groupsApi.create(name);
       const newDesktop: DesktopState = {
@@ -282,21 +385,19 @@ export default function App() {
       setActiveDesktopId(newDesktop.id);
     } catch (e) {
       console.error('Failed to create desktop:', e);
+    } finally {
+      setGlobalLoading(false);
     }
   };
 
   const handleRenameDesktop = async (id: string, name: string) => {
-    const desktop = desktops.find((d) => d.id === id);
-    if (desktop?.groupId) {
-      try {
-        await groupsApi.update(desktop.groupId, name);
-      } catch (e) {
-        console.error('Failed to rename desktop:', e);
-      }
-    }
     setDesktops((prev) =>
       prev.map((d) => (d.id === id ? { ...d, name } : d))
     );
+    const desktop = desktops.find((d) => d.id === id);
+    if (desktop?.groupId) {
+      groupsApi.update(desktop.groupId, name).catch(() => {});
+    }
   };
 
   const handleRemoveDesktop = async (id: string) => {
@@ -326,6 +427,85 @@ export default function App() {
     ));
   };
 
+  // Agent action handler — 处理后端推送的操作指令
+  const handleAgentAction = useCallback(async (action: AgentAction) => {
+    switch (action.type) {
+      case 'add_terminal':
+        await handleAddWindow('ttyd', undefined, action.title);
+        break;
+      case 'add_iframe':
+        await handleAddWindow('preview', action.url, action.title);
+        break;
+      case 'close_window':
+        await handleCloseWindow(action.window_id);
+        break;
+      case 'close_all':
+        for (const w of [...activeDesktop.windows]) await handleCloseWindow(w.id);
+        break;
+      case 'resize_window':
+        await handleUpdateWindow(action.window_id, {
+          ...(action.x !== undefined && { x: action.x }),
+          ...(action.y !== undefined && { y: action.y }),
+          ...(action.width !== undefined && { width: action.width }),
+          ...(action.height !== undefined && { height: action.height }),
+        });
+        break;
+      case 'grid_layout':
+        await handleLayoutGrid();
+        break;
+      case 'focus_window':
+        handleFocusWindow(action.window_id);
+        break;
+      case 'minimize_window':
+        handleMinimizeWindow(action.window_id);
+        break;
+      case 'maximize_window':
+        handleMaximizeWindow(action.window_id);
+        break;
+      case 'restart_terminal':
+        try { await tmuxApi.restartPane(action.window_id); } catch {}
+        break;
+      case 'send_command':
+        try { await tmuxApi.send(action.window_id, action.command); } catch {}
+        break;
+      case 'message':
+      case 'thinking':
+      case 'error': {
+        const convId = activeConversationId;
+        if (convId) {
+          addAssistantMessage(convId, action.type === 'error' ? `❌ ${action.content}` : action.type === 'thinking' ? `💭 ${action.content}` : action.content);
+        }
+        break;
+      }
+    }
+  }, [activeDesktop, activeConversationId]);
+
+  // 保持 ref 最新
+  useEffect(() => {
+    actionHandlerRef.current = handleAgentAction;
+  }, [handleAgentAction]);
+
+  // 每个桌面建立 WS Agent 连接
+  useEffect(() => {
+    if (!activeDesktop.groupId) return;
+    const token = localStorage.getItem('token') || '';
+    
+    // 销毁旧连接
+    agentRef.current?.destroy();
+    
+    agentRef.current = new DesktopAgent(
+      activeDesktop.groupId,
+      token,
+      (action) => actionHandlerRef.current(action),
+      setAgentStatus,
+    );
+
+    return () => {
+      agentRef.current?.destroy();
+      agentRef.current = null;
+    };
+  }, [activeDesktop.groupId]);
+
   const handleNewConversation = () => {
     const newId = generateId();
     const newConversation: Conversation = {
@@ -340,102 +520,168 @@ export default function App() {
     setIsSidebarOpen(true);
   };
 
-  const handleSendMessage = (content: string) => {
-    // Check for commands
-    if (content.toLowerCase() === 'open terminal') {
-        handleAddWindow('ttyd');
-        return;
-    }
-    if (content.toLowerCase() === 'new browser' || content.toLowerCase() === 'open browser') {
-        handleAddWindow('preview', 'https://www.google.com/webhp?igu=1', 'Google');
-        return;
-    }
-    if (content.toLowerCase() === 'switch to desktop 2') {
-        if (desktops.length < 2) {
-            handleAddDesktop();
-        }
-        // Find the second desktop
-        const secondDesktop = desktops[1] || desktops[0]; // Fallback if add failed or async issue (though state update is batched usually, here we might need to wait, but for simplicity let's just try to switch if exists)
-        // Actually, since setState is async, we can't switch immediately if we just added it.
-        // But if it exists:
-        if (desktops.length >= 2) {
-             setActiveDesktopId(desktops[1].id);
-        }
-        return;
+  const addAssistantMessage = (convId: string, content: string) => {
+    const msg: Message = { id: generateId(), role: 'assistant', content, timestamp: Date.now() };
+    setConversations(prev => prev.map(c =>
+      c.id === convId ? { ...c, messages: [...c.messages, msg], updatedAt: Date.now() } : c
+    ));
+  };
+
+  const handleAgentCommand = async (cmd: string, convId: string) => {
+    const lower = cmd.toLowerCase().trim();
+
+    // 终端操作
+    if (/^(open|new|创建|打开)\s*(terminal|终端)/i.test(lower)) {
+      await handleAddWindow('ttyd');
+      addAssistantMessage(convId, '✅ 已创建新终端');
+      return true;
     }
 
+    if (/^(close|关闭)\s*(terminal|终端|window|窗口)\s*(all|所有)?/i.test(lower)) {
+      const wins = [...activeDesktop.windows];
+      for (const w of wins) await handleCloseWindow(w.id);
+      addAssistantMessage(convId, `✅ 已关闭 ${wins.length} 个窗口`);
+      return true;
+    }
+
+    if (/^(restart|重启)\s*(terminal|终端)\s*(.+)?/i.test(lower)) {
+      const match = cmd.match(/(?:restart|重启)\s*(?:terminal|终端)\s*(.+)?/i);
+      const target = match?.[1]?.trim();
+      const win = target
+        ? activeDesktop.windows.find(w => w.title.toLowerCase().includes(target.toLowerCase()) || w.id.includes(target))
+        : activeDesktop.windows.find(w => w.type === 'ttyd');
+      if (win) {
+        try { await tmuxApi.restartPane(win.id); addAssistantMessage(convId, `✅ 已重启终端: ${win.title}`); }
+        catch { addAssistantMessage(convId, `❌ 重启失败: ${win.title}`); }
+      } else {
+        addAssistantMessage(convId, '❌ 未找到终端');
+      }
+      return true;
+    }
+
+    // 发送命令到终端
+    const sendMatch = cmd.match(/^(?:send|run|执行|发送)\s+(.+?)(?:\s+(?:to|到)\s+(.+))?$/i);
+    if (sendMatch) {
+      const command = sendMatch[1];
+      const target = sendMatch[2]?.trim();
+      const win = target
+        ? activeDesktop.windows.find(w => w.title.toLowerCase().includes(target.toLowerCase()))
+        : activeDesktop.windows.find(w => w.type === 'ttyd');
+      if (win) {
+        try { await tmuxApi.send(win.id, command); addAssistantMessage(convId, `✅ 已发送命令到 ${win.title}: \`${command}\``); }
+        catch { addAssistantMessage(convId, `❌ 发送失败`); }
+      } else {
+        addAssistantMessage(convId, '❌ 未找到终端');
+      }
+      return true;
+    }
+
+    // 浏览器
+    const urlMatch = cmd.match(/^(?:open|打开)\s+(https?:\/\/\S+)(?:\s+(.+))?$/i);
+    if (urlMatch) {
+      await handleAddWindow('preview', urlMatch[1], urlMatch[2] || urlMatch[1]);
+      addAssistantMessage(convId, `✅ 已打开: ${urlMatch[1]}`);
+      return true;
+    }
+    if (/^(open|new|打开)\s*(browser|浏览器)/i.test(lower)) {
+      await handleAddWindow('preview', 'https://www.google.com/webhp?igu=1', 'Google');
+      addAssistantMessage(convId, '✅ 已打开浏览器');
+      return true;
+    }
+
+    // 桌面操作
+    if (/^(new|add|新建|添加)\s*(desktop|桌面)/i.test(lower)) {
+      await handleAddDesktop();
+      addAssistantMessage(convId, '✅ 已创建新桌面');
+      return true;
+    }
+
+    const switchMatch = cmd.match(/^(?:switch|切换)\s*(?:to|到)?\s*(?:desktop|桌面)\s*(.+)/i);
+    if (switchMatch) {
+      const target = switchMatch[1].trim();
+      const d = desktops.find(d => d.name.toLowerCase().includes(target.toLowerCase()) || d.id.includes(target));
+      if (d) { setActiveDesktopId(d.id); addAssistantMessage(convId, `✅ 已切换到: ${d.name}`); }
+      else { addAssistantMessage(convId, `❌ 未找到桌面: ${target}`); }
+      return true;
+    }
+
+    if (/^(grid|layout|布局|排列)/i.test(lower)) {
+      await handleLayoutGrid();
+      addAssistantMessage(convId, '✅ 已自动排列窗口');
+      return true;
+    }
+
+    // 状态查询
+    if (/^(status|状态|list|列表|ls)/i.test(lower)) {
+      const wins = activeDesktop.windows.map(w => `  • ${w.title} (${w.type})`).join('\n');
+      const desktopList = desktops.map(d => `  ${d.id === activeDesktopId ? '▶' : '○'} ${d.name} (${d.windows.length} 窗口)`).join('\n');
+      addAssistantMessage(convId, `📊 **当前桌面:** ${activeDesktop.name}\n\n**窗口:**\n${wins || '  (空)'}\n\n**所有桌面:**\n${desktopList}`);
+      return true;
+    }
+
+    // 帮助
+    if (/^(help|帮助|commands|命令|\?)/i.test(lower)) {
+      addAssistantMessage(convId, `🤖 **ZapOS Agent 命令:**
+
+**终端:**
+• \`open terminal\` — 创建终端
+• \`close terminal all\` — 关闭所有窗口
+• \`restart terminal [name]\` — 重启终端
+• \`send <cmd> to <name>\` — 发送命令到终端
+
+**浏览器:**
+• \`open browser\` — 打开浏览器
+• \`open https://...\` — 打开URL
+
+**桌面:**
+• \`new desktop\` — 新建桌面
+• \`switch to desktop <name>\` — 切换桌面
+• \`grid\` — 自动排列窗口
+
+**查询:**
+• \`status\` — 查看当前状态
+• \`help\` — 显示帮助`);
+      return true;
+    }
+
+    return false;
+  };
+
+  const handleSendMessage = async (content: string) => {
     let currentConversationId = activeConversationId;
-    let newConversations = [...conversations];
 
     if (!currentConversationId) {
-        const newId = generateId();
-        const newConversation: Conversation = {
-            id: newId,
-            desktopId: activeDesktopId,
-            title: content.slice(0, 30) + (content.length > 30 ? '...' : ''),
-            messages: [],
-            updatedAt: Date.now(),
-        };
-        newConversations = [newConversation, ...newConversations];
-        currentConversationId = newId;
-        setActiveConversationId(newId);
+      const newId = generateId();
+      const newConversation: Conversation = {
+        id: newId,
+        desktopId: activeDesktopId,
+        title: content.slice(0, 30) + (content.length > 30 ? '...' : ''),
+        messages: [],
+        updatedAt: Date.now(),
+      };
+      setConversations(prev => [newConversation, ...prev]);
+      currentConversationId = newId;
+      setActiveConversationId(newId);
     }
 
-    const userMsg: Message = {
-        id: generateId(),
-        role: 'user',
-        content,
-        timestamp: Date.now(),
-    };
-
-    setConversations(prev => {
-        // If we created a new conversation locally, use that list as base, otherwise use prev
-        // But wait, if we created a new one, it's already in newConversations.
-        // However, prev might have changed? Unlikely in this synchronous block but good practice.
-        // Actually, if we created a new conversation, we need to make sure we don't lose it.
-        
-        // Simpler approach:
-        // If currentConversationId was null, we definitely created a new one.
-        // We need to add it to the state.
-        
-        let updatedConversations = prev;
-        if (!activeConversationId) {
-             // We created a new one
-             const newConv = newConversations.find(c => c.id === currentConversationId);
-             if (newConv) {
-                 updatedConversations = [newConv, ...prev];
-             }
-        }
-
-        return updatedConversations.map(c => {
-            if (c.id === currentConversationId) {
-                return {
-                    ...c,
-                    title: c.messages.length === 0 ? content.slice(0, 30) + (content.length > 30 ? '...' : '') : c.title,
-                    messages: [...c.messages, userMsg],
-                    updatedAt: Date.now(),
-                };
-            }
-            return c;
-        });
-    });
-
+    const userMsg: Message = { id: generateId(), role: 'user', content, timestamp: Date.now() };
+    setConversations(prev => prev.map(c =>
+      c.id === currentConversationId
+        ? { ...c, title: c.messages.length === 0 ? content.slice(0, 30) + (content.length > 30 ? '...' : '') : c.title, messages: [...c.messages, userMsg], updatedAt: Date.now() }
+        : c
+    ));
     setIsSidebarOpen(true);
 
-    // Mock Response
-    setTimeout(() => {
-        const responseMsg: Message = {
-            id: generateId(),
-            role: 'assistant',
-            content: "I'm a mock AI assistant. I can't actually process your request yet, but I'm here to help!",
-            timestamp: Date.now(),
-        };
-        setConversations(prev => prev.map(c => 
-            c.id === currentConversationId 
-            ? { ...c, messages: [...c.messages, responseMsg] }
-            : c
-        ));
-    }, 1000);
+    const handled = await handleAgentCommand(content, currentConversationId!);
+    if (!handled) {
+      // 本地命令不匹配，发给后端 Agent
+      if (agentRef.current) {
+        agentRef.current.send(content);
+        addAssistantMessage(currentConversationId!, '💭 正在思考...');
+      } else {
+        addAssistantMessage(currentConversationId!, '⚠️ Agent 未连接，输入 `help` 查看本地命令');
+      }
+    }
   };
 
   // Check if we should show the central prompt
@@ -445,20 +691,46 @@ export default function App() {
   const activeDesktopConversations = conversations.filter(c => c.desktopId === activeDesktopId);
   const showCentralPrompt = activeDesktop.windows.length === 0 && activeDesktopConversations.length === 0;
 
-  const handleLayoutGrid = () => {
+  const handleLayoutSplit = (direction: 'h' | 'v') => {
+    const wins = activeDesktop.windows.filter(w => !w.isMinimized);
+    const count = wins.length;
+    if (count === 0) return;
+    const startX = 20, startY = 20;
+    const bottom = 60;
+    const gap = 8;
+    const availW = window.innerWidth - startX * 2;
+    const availH = window.innerHeight - startY - bottom;
+
+    setDesktops(prev => prev.map(d => {
+      if (d.id !== activeDesktopId) return d;
+      const newWindows = d.windows.map(w => {
+        const idx = wins.findIndex(ww => ww.id === w.id);
+        if (idx === -1) return w;
+        if (direction === 'v') {
+          const colW = (availW - (count - 1) * gap) / count;
+          return { ...w, x: startX + idx * (colW + gap), y: startY, width: colW, height: availH, isMaximized: false, isMinimized: false };
+        } else {
+          const rowH = (availH - (count - 1) * gap) / count;
+          return { ...w, x: startX, y: startY + idx * (rowH + gap), width: availW, height: rowH, isMaximized: false, isMinimized: false };
+        }
+      });
+      return { ...d, windows: newWindows };
+    }));
+  };
+
+  const handleLayoutGrid = async () => {
     const windows = activeDesktop.windows;
     const count = windows.length;
     if (count === 0) return;
     
     // Calculate available space
-    const topBarHeight = 48;
-    const dockHeight = 96; // Approx
+    const startX = 20, startY = 20;
+    const dockHeight = 60;
     const gap = 8;
-    const outerMargin = 16;
     const sidebarWidth = isSidebarOpen ? 320 : 0;
     
-    const availableWidth = window.innerWidth - sidebarWidth - (outerMargin * 2);
-    const availableHeight = window.innerHeight - topBarHeight - dockHeight - outerMargin; 
+    const availableWidth = window.innerWidth - sidebarWidth - (startX * 2);
+    const availableHeight = window.innerHeight - startY - dockHeight; 
 
     // Find optimal grid dimensions
     // We want the cell aspect ratio to be close to 16:9 (1.77) or at least > 1
@@ -535,8 +807,8 @@ export default function App() {
                 if (originalIndex !== -1) {
                     newWindows[originalIndex] = {
                         ...newWindows[originalIndex],
-                        x: outerMargin + (c * (widthPerWindow + gap)),
-                        y: topBarHeight + outerMargin + (r * (rowHeight + gap)),
+                        x: startX + (c * (widthPerWindow + gap)),
+                        y: startY + (r * (rowHeight + gap)),
                         width: widthPerWindow,
                         height: rowHeight,
                         isMaximized: false,
@@ -553,10 +825,54 @@ export default function App() {
             windows: newWindows
         };
     }));
+
+    // 同步布局到API
+    if (activeDesktop.groupId) {
+      // 需要用计算后的新坐标，重新算一遍
+      const sortedWindows = [...activeDesktop.windows].sort((a, b) => {
+        if (Math.abs(a.y - b.y) > 50) return a.y - b.y;
+        return a.x - b.x;
+      });
+      const layoutPanes: { pane_id: string; pos_x: number; pos_y: number; width: number; height: number; z_index: number }[] = [];
+      let idx = 0;
+      for (let r = 0; r < bestRows; r++) {
+        const remaining = count - idx;
+        const isLast = r === bestRows - 1;
+        const colsInRow = (isLast && remaining < bestCols) ? remaining : bestCols;
+        const rowHeight = (availableHeight - ((bestRows - 1) * gap)) / bestRows;
+        const widthPerWindow = (availableWidth - ((colsInRow - 1) * gap)) / colsInRow;
+        for (let c = 0; c < colsInRow; c++) {
+          if (idx >= count) break;
+          const w = sortedWindows[idx];
+          layoutPanes.push({
+            pane_id: w.id,
+            pos_x: startX + (c * (widthPerWindow + gap)),
+            pos_y: startY + (r * (rowHeight + gap)),
+            width: widthPerWindow,
+            height: rowHeight,
+            z_index: w.zIndex,
+          });
+          idx++;
+        }
+      }
+      try {
+        await groupsApi.batchUpdateLayout(activeDesktop.groupId, layoutPanes);
+      } catch (e) {
+        console.error('Failed to sync layout to API:', e);
+      }
+    }
   };
 
   return (
     <div className="h-screen w-screen overflow-hidden flex flex-col font-sans text-gray-900 select-none bg-black">
+      {globalLoading && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/20">
+          <div className="flex items-center gap-3 bg-[#1c1f26] px-6 py-4 rounded-xl border border-[#2a2e35] shadow-2xl">
+            <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+            <span className="text-sm text-gray-300">{globalLoading}</span>
+          </div>
+        </div>
+      )}
       <TopBar
         desktops={desktops}
         activeDesktopId={activeDesktopId}
@@ -565,11 +881,15 @@ export default function App() {
         onRemoveDesktop={handleRemoveDesktop}
         onRenameDesktop={handleRenameDesktop}
         onAddWindow={handleAddWindow}
+        isCreatingAgent={false}
+        setLoading={setGlobalLoading}
         isSidebarOpen={isSidebarOpen}
         sidebarPosition={sidebarPosition}
         onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
         onSetSidebarPosition={setSidebarPosition}
         onLayoutGrid={handleLayoutGrid}
+        onLayoutSplitH={() => handleLayoutSplit('h')}
+        onLayoutSplitV={() => handleLayoutSplit('v')}
         user={user}
         onOpenLogin={() => setIsLoginOpen(true)}
         onLogout={() => {
@@ -599,21 +919,26 @@ export default function App() {
         )}
 
         <div className="flex-1 relative">
-            {showCentralPrompt && (
+            {/* CentralPrompt hidden - planned for future */}
+            {/* {showCentralPrompt && (
                 <CentralPrompt onSendMessage={handleSendMessage} />
-            )}
+            )} */}
 
-            <Desktop
-                id={activeDesktop.id}
-                name={activeDesktop.name}
-                windows={activeDesktop.windows}
-                activeWindowId={activeWindowId}
-                onUpdateWindow={handleUpdateWindow}
-                onFocusWindow={handleFocusWindow}
-                onCloseWindow={handleCloseWindow}
-                onMinimizeWindow={handleMinimizeWindow}
-                onMaximizeWindow={handleMaximizeWindow}
-            />
+            {desktops.map((desktop) => (
+              <div key={desktop.id} style={{ display: desktop.id === activeDesktopId ? 'block' : 'none' }} className="absolute inset-0">
+                <Desktop
+                    id={desktop.id}
+                    name={desktop.name}
+                    windows={desktop.windows}
+                    activeWindowId={desktop.id === activeDesktopId ? activeWindowId : null}
+                    onUpdateWindow={handleUpdateWindow}
+                    onFocusWindow={handleFocusWindow}
+                    onCloseWindow={handleCloseWindow}
+                    onMinimizeWindow={handleMinimizeWindow}
+                    onMaximizeWindow={handleMaximizeWindow}
+                />
+              </div>
+            ))}
             
             <Dock
                 windows={activeDesktop.windows}
@@ -651,13 +976,10 @@ export default function App() {
         }}
         onLogout={() => {
             setUser(null);
+            localStorage.removeItem('token');
             setIsLoginOpen(false);
         }}
-        onUpgrade={(planId) => {
-            if (user) {
-                setUser({ ...user, plan: planId });
-            }
-        }}
+        onUpgrade={() => {}}
       />
     </div>
   );

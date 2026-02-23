@@ -1,8 +1,18 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Terminal, Globe, Plus, RefreshCw, Monitor, Trash2, ChevronDown, Settings, LogOut, Sidebar as SidebarIcon, AlignLeft, AlignRight, Wifi, LayoutGrid, User as UserIcon, Check } from 'lucide-react';
+import { Terminal, Globe, Plus, RefreshCw, Monitor, Trash2, ChevronDown, Settings, LogOut, Sidebar as SidebarIcon, AlignLeft, AlignRight, Wifi, LayoutGrid, User as UserIcon, Check, Bot, Loader2, RotateCw, Pencil, Columns, Rows } from 'lucide-react';
+import axios from 'axios';
 import { cn } from '../lib/utils';
 import { WindowType, DesktopState, User, PLANS } from '../types';
 import { Logo } from './Logo';
+import { ttydApi, appsApi, tmuxApi } from '../lib/api';
+import { ConfirmDialog } from './ConfirmDialog';
+
+interface TtydConfig {
+  pane_id: string;
+  title: string;
+  ttyd_port: number;
+  active: number;
+}
 
 interface TopBarProps {
   desktops: DesktopState[];
@@ -11,16 +21,20 @@ interface TopBarProps {
   onAddDesktop: () => void;
   onRemoveDesktop: (id: string) => void;
   onRenameDesktop: (id: string, name: string) => void;
-  onAddWindow: (type: WindowType, url?: string, title?: string) => void;
+  onAddWindow: (type: WindowType, url?: string, title?: string, paneId?: string) => void;
   isSidebarOpen: boolean;
   sidebarPosition: 'left' | 'right';
   onToggleSidebar: () => void;
   onSetSidebarPosition: (position: 'left' | 'right') => void;
   onLayoutGrid: () => void;
+  onLayoutSplitH: () => void;
+  onLayoutSplitV: () => void;
   user: User | null;
   onOpenLogin: () => void;
   onLogout: () => void;
   onUpgrade: (planId: 'free' | 'pro' | 'enterprise') => void;
+  isCreatingAgent?: boolean;
+  setLoading: (msg: string | false) => void;
 }
 
 function NetworkMonitor() {
@@ -30,7 +44,7 @@ function NetworkMonitor() {
     const checkHealth = async () => {
       const start = performance.now();
       try {
-        await fetch('/api/health', { method: 'HEAD', cache: 'no-store' });
+        await axios.get('https://g-fast-api.cicy.de5.net/api/health');
         const end = performance.now();
         setLatency(Math.round(end - start));
       } catch (e) {
@@ -71,16 +85,72 @@ export function TopBar({
   onToggleSidebar,
   onSetSidebarPosition,
   onLayoutGrid,
+  onLayoutSplitH,
+  onLayoutSplitV,
   user,
   onOpenLogin,
   onLogout,
   onUpgrade,
+  isCreatingAgent,
+  setLoading,
 }: TopBarProps) {
   const [activeMenu, setActiveMenu] = useState<'chats' | 'apps' | 'desktops' | 'settings' | 'user' | null>(null);
   const [urlInput, setUrlInput] = useState('');
   const [editingDesktopId, setEditingDesktopId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
+  const [desktopSearch, setDesktopSearch] = useState('');
+
+  // Cache layer: window memory + localStorage
+  const _cache = ((window as any).__mc = (window as any).__mc || {}) as Record<string, any>;
+  const cacheGet = (key: string) => {
+    if (_cache[key]) return _cache[key];
+    try { const v = localStorage.getItem('cache_' + key); if (v) { _cache[key] = JSON.parse(v); return _cache[key]; } } catch {}
+    return null;
+  };
+  const cacheSet = (key: string, val: any) => {
+    _cache[key] = val;
+    try { localStorage.setItem('cache_' + key, JSON.stringify(val)); } catch {}
+  };
+
+  const [agents, _setAgents] = useState<TtydConfig[]>(() => cacheGet('agents') || []);
+  const setAgents = (v: TtydConfig[] | ((prev: TtydConfig[]) => TtydConfig[])) => {
+    _setAgents(prev => { const next = typeof v === 'function' ? v(prev) : v; cacheSet('agents', next); return next; });
+  };
+  const [agentsLoading, setAgentsLoading] = useState(false);
+  const [agentSearch, setAgentSearch] = useState('');
+  const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
+  const [editingAgentName, setEditingAgentName] = useState('');
+  const [apps, _setApps] = useState<{id: number; name: string; url: string; icon: string}[]>(() => cacheGet('apps') || []);
+  const setApps = (v: typeof apps | ((prev: typeof apps) => typeof apps)) => {
+    _setApps(prev => { const next = typeof v === 'function' ? v(prev) : v; cacheSet('apps', next); return next; });
+  };
+  const [appSearch, setAppSearch] = useState('');
+  const [editingAppId, setEditingAppId] = useState<number | null>(null);
+  const [editingAppName, setEditingAppName] = useState('');
+  const [confirm, setConfirm] = useState<{title: string; message: string; onConfirm: () => void; danger?: boolean} | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  const loadAgents = async () => {
+    setAgentsLoading(true);
+    try {
+      const res = await ttydApi.list();
+      const list = (res.configs || []).filter((c: TtydConfig) => c.active);
+      setAgents(list);
+    } catch (e) {
+      console.error('[TopBar] loadAgents error:', e);
+    } finally {
+      setAgentsLoading(false);
+    }
+  };
+
+  const loadApps = async () => {
+    try {
+      const res = await appsApi.list();
+      setApps(res.apps || []);
+    } catch (e) {
+      console.error('[TopBar] loadApps error:', e);
+    }
+  };
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -95,27 +165,39 @@ export function TopBar({
 
   const toggleMenu = (menu: 'chats' | 'apps' | 'desktops' | 'settings' | 'user') => {
     setActiveMenu(activeMenu === menu ? null : menu);
+    if (menu === 'chats' && activeMenu !== 'chats') { loadAgents(); setAgentSearch(''); }
+    if (menu === 'apps' && activeMenu !== 'apps') { loadApps(); setAppSearch(''); setUrlInput(''); }
+    if (menu === 'desktops' && activeMenu !== 'desktops') { setDesktopSearch(''); }
     if (menu !== 'desktops') {
         setEditingDesktopId(null);
     }
   };
 
-  const handleAddUrl = () => {
+  const handleAddUrl = async () => {
     if (urlInput.trim()) {
       let url = urlInput.trim();
-      if (!url.startsWith('http')) {
-        url = 'https://' + url;
+      if (!url.startsWith('http')) url = 'https://' + url;
+      if (apps.some(a => a.url === url)) {
+        onAddWindow('preview', url, apps.find(a => a.url === url)!.name);
+        setUrlInput('');
+        setActiveMenu(null);
+        return;
       }
-      onAddWindow('preview', url, new URL(url).hostname);
+      setLoading('Adding app...');
+      try {
+        const name = new URL(url).hostname;
+        await appsApi.create(name, url);
+        setApps(prev => [...prev, { id: Date.now(), name, url, icon: '' }]);
+        onAddWindow('preview', url, name);
+      } catch {} finally { setLoading(false); }
       setUrlInput('');
       setActiveMenu(null);
     }
   };
 
-  const handleStartRenaming = (e: React.MouseEvent, desktop: DesktopState) => {
-    e.stopPropagation();
-    setEditingDesktopId(desktop.id);
-    setEditingName(desktop.name);
+  const withLoading = async (msg: string, fn: () => Promise<any>) => {
+    setLoading(msg); await new Promise(r => setTimeout(r, 0));
+    try { await fn(); } finally { setLoading(false); }
   };
 
   const handleFinishRenaming = () => {
@@ -133,6 +215,7 @@ export function TopBar({
       {/* Left: Logo & Desktop Switcher */}
       <div className="flex items-center gap-4">
         <Logo size="sm" showText={false} />
+        <span className="text-xs text-gray-500">v0.2.0</span>
 
         {/* Desktop Switcher Button */}
         <div className="relative">
@@ -148,19 +231,21 @@ export function TopBar({
             </button>
 
             {activeMenu === 'desktops' && (
-            <div className="absolute top-full left-0 mt-2 w-64 bg-[#1c1f26] border border-[#2a2e35] rounded-lg shadow-xl overflow-hidden z-50 flex flex-col">
+            <div className="absolute top-full left-0 mt-2 w-80 bg-[#1c1f26] border border-[#2a2e35] rounded-lg shadow-xl overflow-hidden z-50 flex flex-col">
                 <div className="flex items-center justify-between px-3 py-2 border-b border-[#2a2e35] text-xs text-gray-500 uppercase tracking-wider">
                 <span>Workspaces</span>
-                <button className="hover:text-white" onClick={() => {
+                <button className="hover:text-white cursor-pointer" onClick={() => {
                     onAddDesktop();
-                    setActiveMenu(null);
                 }}><Plus size={14} /></button>
                 </div>
-                <div className="py-1">
-                {desktops.map((desktop) => (
+                <div className="px-2 py-1.5 border-b border-[#2a2e35]">
+                  <input type="text" value={desktopSearch} onChange={e => setDesktopSearch(e.target.value)} placeholder="Search desktops..." className="w-full bg-[#252932] text-white text-xs px-2 py-1 rounded border border-[#333] outline-none placeholder-gray-500 focus:border-blue-500/50" autoFocus />
+                </div>
+                <div className="py-1 max-h-80 overflow-y-auto">
+                {desktops.filter(d => !desktopSearch || d.name.toLowerCase().includes(desktopSearch.toLowerCase())).map((desktop) => (
                     <div
                     key={desktop.id}
-                    className="group flex items-center justify-between px-3 py-2 hover:bg-[#2a2e35] cursor-pointer"
+                    className="group flex items-center px-3 py-2 hover:bg-[#2a2e35] cursor-pointer"
                     onClick={() => {
                         if (editingDesktopId !== desktop.id) {
                             onSwitchDesktop(desktop.id);
@@ -168,47 +253,27 @@ export function TopBar({
                         }
                     }}
                     >
-                    <div className="flex items-center gap-2 text-gray-400 group-hover:text-white flex-1 min-w-0">
-                        <Monitor size={14} className={desktop.id === activeDesktopId ? "text-blue-400 shrink-0" : "text-gray-500 shrink-0"} />
-                        
-                        {editingDesktopId === desktop.id ? (
-                            <input
-                                type="text"
-                                value={editingName}
-                                onChange={(e) => setEditingName(e.target.value)}
-                                onKeyDown={(e) => {
-                                    if (e.key === 'Enter') handleFinishRenaming();
-                                    e.stopPropagation();
-                                }}
-                                onBlur={handleFinishRenaming}
-                                onClick={(e) => e.stopPropagation()}
-                                className="bg-[#111] text-white px-1 py-0.5 rounded border border-blue-500/50 outline-none w-full text-sm"
-                                autoFocus
-                            />
-                        ) : (
-                            <span 
-                                className={cn("truncate", desktop.id === activeDesktopId && "font-medium text-white")}
-                                onDoubleClick={(e) => handleStartRenaming(e, desktop)}
-                                title="Double click to rename"
-                            >
-                                {desktop.name}
-                            </span>
-                        )}
-                    </div>
-                    
+                    <Monitor size={14} className={desktop.id === activeDesktopId ? "text-blue-400 shrink-0" : "text-gray-500 shrink-0"} />
+                    {editingDesktopId === desktop.id ? (
+                        <input
+                            type="text"
+                            value={editingName}
+                            onChange={(e) => setEditingName(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') handleFinishRenaming(); e.stopPropagation(); }}
+                            onBlur={handleFinishRenaming}
+                            onClick={(e) => e.stopPropagation()}
+                            className="bg-[#111] text-white px-1 py-0.5 rounded border border-blue-500/50 outline-none flex-1 text-xs ml-2"
+                            autoFocus
+                        />
+                    ) : (
+                        <span className={cn("truncate flex-1 ml-2 text-gray-400 group-hover:text-white", desktop.id === activeDesktopId && "font-medium text-white")}>{desktop.name}</span>
+                    )}
                     {editingDesktopId !== desktop.id && (
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            {desktops.length > 1 && (
-                                <button
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        onRemoveDesktop(desktop.id);
-                                    }}
-                                    className="text-gray-500 hover:text-red-500 p-1"
-                                >
-                                    <Trash2 size={14} />
-                                </button>
-                            )}
+                        <div className="flex gap-1 opacity-0 group-hover:opacity-100" onClick={e => e.stopPropagation()}>
+                          <button onClick={() => { setEditingDesktopId(desktop.id); setEditingName(desktop.name); }} className="text-gray-500 hover:text-blue-400 p-0.5" title="Rename"><Pencil size={12} /></button>
+                          {desktops.length > 1 && (
+                            <button onClick={() => setConfirm({ title: 'Delete Desktop', message: `Delete "${desktop.name}"? All windows will be closed.`, danger: true, onConfirm: () => { setConfirm(null); withLoading('Deleting desktop...', () => Promise.resolve(onRemoveDesktop(desktop.id))); } })} className="text-gray-500 hover:text-red-400 p-0.5" title="Delete"><Trash2 size={12} /></button>
+                          )}
                         </div>
                     )}
                     </div>
@@ -230,36 +295,60 @@ export function TopBar({
                 activeMenu === 'chats' && "text-white"
             )}
             >
-            <span className="font-mono text-blue-400 text-lg leading-none">{'>_'}</span>
+            {isCreatingAgent ? <Loader2 size={16} className="text-blue-400 animate-spin" /> : <Bot size={16} className="text-blue-400" />}
             <span>Agents</span>
             </button>
 
             {activeMenu === 'chats' && (
-            <div className="absolute top-full left-0 mt-2 w-64 bg-[#1c1f26] border border-[#2a2e35] rounded-lg shadow-xl overflow-hidden z-50 flex flex-col">
+            <div className="absolute top-full left-0 mt-2 w-80 bg-[#1c1f26] border border-[#2a2e35] rounded-lg shadow-xl overflow-hidden z-50 flex flex-col">
                 <div className="flex items-center justify-between px-3 py-2 border-b border-[#2a2e35] text-xs text-gray-500 uppercase tracking-wider">
                 <span>Active Agents</span>
                 <div className="flex gap-2">
-                    <button className="hover:text-white"><RefreshCw size={14} /></button>
-                    <button className="hover:text-white" onClick={() => {
+                    <button className="hover:text-white cursor-pointer" onClick={loadAgents}><RefreshCw size={14} className={agentsLoading ? 'animate-spin' : ''} /></button>
+                    <button className="hover:text-white cursor-pointer" onClick={() => {
                         onAddWindow('ttyd');
                         setActiveMenu(null);
                     }}><Plus size={14} /></button>
                 </div>
                 </div>
-                <div className="py-1 max-h-64 overflow-y-auto">
-                {/* Mock Data */}
-                {['pane_1771782405384', 'pane_1771781510926', 'test1', 'Fast-Api', 'ttyd-proxy'].map((session) => (
-                    <button
-                    key={session}
+                <div className="px-2 py-1.5 border-b border-[#2a2e35]">
+                  <input type="text" value={agentSearch} onChange={e => setAgentSearch(e.target.value)} placeholder="Search agents..." className="w-full bg-[#252932] text-white text-xs px-2 py-1 rounded border border-[#333] outline-none placeholder-gray-500 focus:border-blue-500/50" autoFocus />
+                </div>
+                <div className="py-1 max-h-80 overflow-y-auto">
+                {agents.filter(a => !agentSearch || (a.title || a.pane_id).toLowerCase().includes(agentSearch.toLowerCase())).length === 0 ? (
+                    <div className="px-3 py-2 text-xs text-gray-500">No agents found</div>
+                ) : agents.filter(a => !agentSearch || (a.title || a.pane_id).toLowerCase().includes(agentSearch.toLowerCase())).map((a) => (
+                    <div
+                    key={a.pane_id}
+                    className="group w-full text-left px-3 py-2 hover:bg-[#2a2e35] flex items-center gap-2 text-gray-400 hover:text-white transition-colors cursor-pointer"
                     onClick={() => {
-                        onAddWindow('ttyd', undefined, session);
-                        setActiveMenu(null);
+                        if (editingAgentId !== a.pane_id) {
+                            onAddWindow('ttyd', undefined, a.title || a.pane_id, a.pane_id);
+                            setActiveMenu(null);
+                        }
                     }}
-                    className="w-full text-left px-3 py-2 hover:bg-[#2a2e35] flex items-center gap-2 text-gray-400 hover:text-white transition-colors"
                     >
-                    <span className="text-blue-400 font-mono">{'>_'}</span>
-                    <span className="truncate">{session}</span>
-                    </button>
+                    <Bot size={14} className="text-blue-400 shrink-0" />
+                    {editingAgentId === a.pane_id ? (
+                        <input
+                            type="text"
+                            value={editingAgentName}
+                            onChange={e => setEditingAgentName(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') { setAgents(prev => prev.map(x => x.pane_id === a.pane_id ? {...x, title: editingAgentName} : x)); setEditingAgentId(null); withLoading('Renaming...', () => tmuxApi.renamePane(a.pane_id, editingAgentName)); } e.stopPropagation(); }}
+                            onBlur={() => { setAgents(prev => prev.map(x => x.pane_id === a.pane_id ? {...x, title: editingAgentName} : x)); setEditingAgentId(null); withLoading('Renaming...', () => tmuxApi.renamePane(a.pane_id, editingAgentName)); }}
+                            onClick={e => e.stopPropagation()}
+                            className="bg-[#111] text-white px-1 py-0.5 rounded border border-blue-500/50 outline-none flex-1 text-xs"
+                            autoFocus
+                        />
+                    ) : (
+                        <span className="truncate flex-1">{a.title || a.pane_id}</span>
+                    )}
+                    <div className="flex gap-1 opacity-0 group-hover:opacity-100" onClick={e => e.stopPropagation()}>
+                      <button onClick={() => { setEditingAgentId(a.pane_id); setEditingAgentName(a.title || a.pane_id); }} className="text-gray-500 hover:text-blue-400 p-0.5" title="Rename"><Pencil size={12} /></button>
+                      <button onClick={() => setConfirm({ title: 'Restart Agent', message: `Restart "${a.title || a.pane_id}"?`, onConfirm: () => { setConfirm(null); withLoading('Restarting...', () => tmuxApi.restartPane(a.pane_id).then(loadAgents)); } })} className="text-gray-500 hover:text-yellow-400 p-0.5" title="Restart"><RotateCw size={12} /></button>
+                      <button onClick={() => setConfirm({ title: 'Delete Agent', message: `Delete "${a.title || a.pane_id}"? This cannot be undone.`, danger: true, onConfirm: () => { setConfirm(null); withLoading('Deleting agent...', () => tmuxApi.deletePane(a.pane_id).then(loadAgents)); } })} className="text-gray-500 hover:text-red-400 p-0.5" title="Delete"><Trash2 size={12} /></button>
+                    </div>
+                    </div>
                 ))}
                 </div>
             </div>
@@ -280,7 +369,7 @@ export function TopBar({
             </button>
 
             {activeMenu === 'apps' && (
-            <div className="absolute top-full left-0 mt-2 w-72 bg-[#1c1f26] border border-[#2a2e35] rounded-lg shadow-xl overflow-hidden z-50 flex flex-col">
+            <div className="absolute top-full left-0 mt-2 w-80 bg-[#1c1f26] border border-[#2a2e35] rounded-lg shadow-xl overflow-hidden z-50 flex flex-col">
                 <div className="p-2 border-b border-[#2a2e35]">
                 <div className="flex items-center gap-2 bg-[#252932] rounded border border-[#333] px-2 py-1 focus-within:border-blue-500/50">
                     <input
@@ -288,36 +377,54 @@ export function TopBar({
                     value={urlInput}
                     onChange={(e) => setUrlInput(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleAddUrl()}
-                    placeholder="https://example.com"
+                    placeholder="Add URL..."
                     className="bg-transparent border-none outline-none text-white text-sm w-full placeholder-gray-500"
-                    autoFocus
                     />
                     <button onClick={handleAddUrl} className="text-green-500 hover:text-green-400">
                     <Plus size={16} />
                     </button>
                 </div>
                 </div>
-                <div className="py-1">
-                <button
+                {apps.length > 0 && (
+                <div className="px-2 py-1.5 border-b border-[#2a2e35]">
+                  <input type="text" value={appSearch} onChange={e => setAppSearch(e.target.value)} placeholder="Search apps..." className="w-full bg-[#252932] text-white text-xs px-2 py-1 rounded border border-[#333] outline-none placeholder-gray-500 focus:border-blue-500/50" autoFocus />
+                </div>
+                )}
+                <div className="py-1 max-h-80 overflow-y-auto">
+                {apps.filter(a => !appSearch || a.name.toLowerCase().includes(appSearch.toLowerCase()) || a.url.toLowerCase().includes(appSearch.toLowerCase())).length === 0 ? (
+                    <div className="px-3 py-2 text-xs text-gray-500">No apps found</div>
+                ) : apps.filter(a => !appSearch || a.name.toLowerCase().includes(appSearch.toLowerCase()) || a.url.toLowerCase().includes(appSearch.toLowerCase())).map((a) => (
+                    <div
+                    key={a.id}
+                    className="group w-full text-left px-3 py-2 hover:bg-[#2a2e35] flex items-center gap-2 text-gray-400 hover:text-white transition-colors cursor-pointer"
                     onClick={() => {
-                        onAddWindow('preview', 'https://www.google.com/webhp?igu=1', 'Google');
-                        setActiveMenu(null);
+                        if (editingAppId !== a.id) {
+                            onAddWindow('preview', a.url, a.name);
+                            setActiveMenu(null);
+                        }
                     }}
-                    className="w-full text-left px-3 py-2 hover:bg-[#2a2e35] flex items-center gap-2 text-gray-400 hover:text-white transition-colors"
-                >
-                    <Globe size={14} className="text-blue-400" />
-                    <span>Open Google</span>
-                </button>
-                <button
-                    onClick={() => {
-                        onAddWindow('preview', 'https://bing.com', 'Bing');
-                        setActiveMenu(null);
-                    }}
-                    className="w-full text-left px-3 py-2 hover:bg-[#2a2e35] flex items-center gap-2 text-gray-400 hover:text-white transition-colors"
-                >
-                    <Globe size={14} className="text-green-400" />
-                    <span>Open Bing</span>
-                </button>
+                    >
+                    <Globe size={14} className="text-blue-400 shrink-0" />
+                    {editingAppId === a.id ? (
+                        <input
+                            type="text"
+                            value={editingAppName}
+                            onChange={e => setEditingAppName(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') { setApps(prev => prev.map(x => x.id === a.id ? {...x, name: editingAppName} : x)); setEditingAppId(null); withLoading('Renaming...', () => appsApi.update(a.id, { name: editingAppName })); } e.stopPropagation(); }}
+                            onBlur={() => { setApps(prev => prev.map(x => x.id === a.id ? {...x, name: editingAppName} : x)); setEditingAppId(null); withLoading('Renaming...', () => appsApi.update(a.id, { name: editingAppName })); }}
+                            onClick={e => e.stopPropagation()}
+                            className="bg-[#111] text-white px-1 py-0.5 rounded border border-blue-500/50 outline-none flex-1 text-xs"
+                            autoFocus
+                        />
+                    ) : (
+                        <span className="truncate flex-1">{a.name}</span>
+                    )}
+                    <div className="flex gap-1 opacity-0 group-hover:opacity-100" onClick={e => e.stopPropagation()}>
+                      <button onClick={() => { setEditingAppId(a.id); setEditingAppName(a.name); }} className="text-gray-500 hover:text-blue-400 p-0.5" title="Rename"><Pencil size={12} /></button>
+                      <button onClick={() => setConfirm({ title: 'Delete App', message: `Delete "${a.name}"?`, danger: true, onConfirm: () => { setConfirm(null); withLoading('Deleting app...', async () => { await appsApi.delete(a.id); setApps(prev => prev.filter(x => x.id !== a.id)); }); } })} className="text-gray-500 hover:text-red-400 p-0.5" title="Delete"><Trash2 size={12} /></button>
+                    </div>
+                    </div>
+                ))}
                 </div>
             </div>
             )}
@@ -332,25 +439,29 @@ export function TopBar({
         
         <div className="w-px h-4 bg-[#2a2e35]" />
 
-        {/* Grid Layout Button */}
-        {activeDesktop && activeDesktop.windows.length > 4 && (
-          <button 
-            onClick={onLayoutGrid}
-            className="hover:text-white transition-colors flex items-center justify-center"
-            title="Grid Layout"
-          >
-            <LayoutGrid size={18} />
-          </button>
+        {/* Layout Buttons */}
+        {activeDesktop && activeDesktop.windows.length >= 2 && (
+          <div className="flex items-center gap-1">
+            <button onClick={onLayoutSplitV} className="hover:text-white transition-colors flex items-center justify-center" title="Split Vertical">
+              <Columns size={18} />
+            </button>
+            <button onClick={onLayoutSplitH} className="hover:text-white transition-colors flex items-center justify-center" title="Split Horizontal">
+              <Rows size={18} />
+            </button>
+            <button onClick={onLayoutGrid} className="hover:text-white transition-colors flex items-center justify-center" title="Grid Layout">
+              <LayoutGrid size={18} />
+            </button>
+          </div>
         )}
 
-        {/* Sidebar Toggle */}
-        <button 
+        {/* Sidebar Toggle - hidden */}
+        {/* <button 
           onClick={onToggleSidebar}
           className={cn("hover:text-white transition-colors flex items-center justify-center", isSidebarOpen && "text-blue-400")}
           title="Toggle Sidebar"
         >
           <SidebarIcon size={18} />
-        </button>
+        </button> */}
 
         {/* Settings Menu */}
         <div className="relative flex items-center">
@@ -467,6 +578,15 @@ export function TopBar({
         </div>
       </div>
 
+      <ConfirmDialog
+        open={!!confirm}
+        title={confirm?.title || ''}
+        message={confirm?.message || ''}
+        onConfirm={() => confirm?.onConfirm()}
+        onCancel={() => setConfirm(null)}
+        confirmText={confirm?.danger ? 'Delete' : 'Confirm'}
+        danger={confirm?.danger}
+      />
     </div>
   );
 }
