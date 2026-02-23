@@ -73,4 +73,4 @@ export const PLANS: Plan[] = [
   }
 ];
 
-export const DEFAULT_TTYD_URL = "https://ttyd-dev.cicy.de5.net/?token=6568a729f18c9903038ff71e70aa1685888d9e8f4ca34419b9a5d9cf784ffdf1&bot_name=w-20020:main.0&iframe=1";
+export const DEFAULT_TTYD_URL = "http://ttyd-proxy.cicy.de5.net/ttyd/main.0/?token=";

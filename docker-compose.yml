@@ -1,0 +1,12 @@
+services:
+  web:
+    build: .
+    ports:
+      - "6905:3000"
+    volumes:
+      - .:/app
+      - /app/node_modules
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - APP_URL=http://localhost:3000
+    restart: unless-stopped
