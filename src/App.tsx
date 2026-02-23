@@ -6,11 +6,13 @@ import { Sidebar } from './components/Sidebar';
 import { CentralPrompt } from './components/CentralPrompt';
 import { LoginDialog } from './components/LoginDialog';
 import { DesktopState, WindowState, WindowType, DEFAULT_TTYD_URL, Conversation, Message, User } from './types';
+import { groupsApi, authApi, Group } from './lib/api';
 
 const STORAGE_KEY = 'macos-web-state-v1';
 
 const DEFAULT_DESKTOP: DesktopState = {
   id: 'desktop-1',
+  groupId: null,
   name: 'Desktop 1',
   windows: [],
   wallpaper: 'default',
@@ -24,10 +26,20 @@ const generateId = () => {
   return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 };
 
+const groupToDesktop = (group: Group): DesktopState => ({
+  id: `desktop-${group.id}`,
+  groupId: group.id,
+  name: group.name,
+  windows: [],
+  wallpaper: 'default',
+  activeConversationId: null,
+});
+
 export default function App() {
   const [desktops, setDesktops] = useState<DesktopState[]>([DEFAULT_DESKTOP]);
   const [activeDesktopId, setActiveDesktopId] = useState<string>('desktop-1');
   const [activeWindowId, setActiveWindowId] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   
   // Sidebar State
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -38,43 +50,98 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [isLoginOpen, setIsLoginOpen] = useState(false);
 
-  // Load state from localStorage on mount
+  // Load state from API on mount
   useEffect(() => {
-    const savedState = localStorage.getItem(STORAGE_KEY);
-    if (savedState) {
+    const loadState = async () => {
       try {
-        const parsed = JSON.parse(savedState);
-        if (parsed.desktops && parsed.desktops.length > 0) {
-          setDesktops(parsed.desktops);
-          setActiveDesktopId(parsed.activeDesktopId || parsed.desktops[0].id);
-        }
-        if (parsed.user) {
-            setUser(parsed.user);
+        const response = await groupsApi.list();
+        if (response.groups && response.groups.length > 0) {
+          const loadedDesktops = response.groups.map(groupToDesktop);
+          setDesktops(loadedDesktops);
+          setActiveDesktopId(loadedDesktops[0].id);
+        } else {
+          const savedState = localStorage.getItem(STORAGE_KEY);
+          if (savedState) {
+            const parsed = JSON.parse(savedState);
+            if (parsed.desktops && parsed.desktops.length > 0) {
+              setDesktops(parsed.desktops);
+              setActiveDesktopId(parsed.activeDesktopId || parsed.desktops[0].id);
+            }
+          }
         }
       } catch (e) {
-        console.error('Failed to load state', e);
+        console.error('Failed to load from API, falling back to localStorage', e);
+        const savedState = localStorage.getItem(STORAGE_KEY);
+        if (savedState) {
+          try {
+            const parsed = JSON.parse(savedState);
+            if (parsed.desktops && parsed.desktops.length > 0) {
+              setDesktops(parsed.desktops);
+              setActiveDesktopId(parsed.activeDesktopId || parsed.desktops[0].id);
+            }
+          } catch (parseError) {
+            console.error('Failed to parse localStorage', parseError);
+          }
+        }
+      } finally {
+        setIsLoading(false);
       }
-    }
+    };
+    loadState();
+  }, []);
+
+  // Check auth and get user info
+  useEffect(() => {
+    const checkAuth = async () => {
+      const params = new URLSearchParams(window.location.search);
+      const token = params.get('token');
+      if (token) {
+        localStorage.setItem('auth_token', token);
+        window.history.replaceState({}, '', window.location.pathname);
+      }
+      
+      const savedToken = localStorage.getItem('auth_token');
+      if (savedToken) {
+        try {
+          const userInfo = await authApi.getUser();
+          setUser({
+            id: String(userInfo.id),
+            name: userInfo.name,
+            email: userInfo.email,
+            avatar: userInfo.avatar,
+            plan: 'free',
+          });
+        } catch (e) {
+          console.error('Auth failed:', e);
+          localStorage.removeItem('auth_token');
+        }
+      }
+    };
+    checkAuth();
   }, []);
 
   // Save state to localStorage on change
   useEffect(() => {
+    if (isLoading) return;
     const state = {
       desktops,
       activeDesktopId,
       user,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [desktops, activeDesktopId, user]);
+  }, [desktops, activeDesktopId, user, isLoading]);
 
   const activeDesktop = desktops.find((d) => d.id === activeDesktopId) || desktops[0];
   const activeConversationId = activeDesktop.activeConversationId;
   const activeConversation = conversations.find(c => c.id === activeConversationId);
 
-  const handleAddWindow = (type: WindowType, url?: string, title?: string) => {
+  const handleAddWindow = async (type: WindowType, url?: string, title?: string) => {
+    if (!activeDesktop.groupId) return;
+    
     const maxZ = Math.max(0, ...activeDesktop.windows.map(w => w.zIndex));
+    const windowId = generateId();
     const newWindow: WindowState = {
-      id: generateId(),
+      id: windowId,
       type,
       title: title || (type === 'ttyd' ? 'Terminal' : 'New Window'),
       url: url || (type === 'ttyd' ? DEFAULT_TTYD_URL : 'https://www.google.com/webhp?igu=1'),
@@ -87,6 +154,12 @@ export default function App() {
       isMaximized: false,
     };
 
+    try {
+      await groupsApi.addPane(activeDesktop.groupId, windowId);
+    } catch (e) {
+      console.error('Failed to add pane to API:', e);
+    }
+
     setDesktops((prev) =>
       prev.map((d) =>
         d.id === activeDesktopId
@@ -97,7 +170,38 @@ export default function App() {
     setActiveWindowId(newWindow.id);
   };
 
-  const handleUpdateWindow = (id: string, updates: Partial<WindowState>) => {
+  const handleUpdateWindow = async (id: string, updates: Partial<WindowState>) => {
+    if (!activeDesktop.groupId) {
+      setDesktops((prev) =>
+        prev.map((d) =>
+          d.id === activeDesktopId
+            ? {
+                ...d,
+                windows: d.windows.map((w) =>
+                  w.id === id ? { ...w, ...updates } : w
+                ),
+              }
+            : d
+        )
+      );
+      return;
+    }
+
+    const window = activeDesktop.windows.find((w) => w.id === id);
+    if (window && (updates.x !== undefined || updates.y !== undefined || updates.width !== undefined || updates.height !== undefined || updates.zIndex !== undefined)) {
+      try {
+        await groupsApi.updatePaneLayout(activeDesktop.groupId, id, {
+          pos_x: updates.x ?? window.x,
+          pos_y: updates.y ?? window.y,
+          width: updates.width ?? window.width,
+          height: updates.height ?? window.height,
+          z_index: updates.zIndex ?? window.zIndex,
+        });
+      } catch (e) {
+        console.error('Failed to update pane layout:', e);
+      }
+    }
+
     setDesktops((prev) =>
       prev.map((d) =>
         d.id === activeDesktopId
@@ -129,7 +233,15 @@ export default function App() {
     );
   };
 
-  const handleCloseWindow = (id: string) => {
+  const handleCloseWindow = async (id: string) => {
+    if (activeDesktop.groupId) {
+      try {
+        await groupsApi.removePane(activeDesktop.groupId, id);
+      } catch (e) {
+        console.error('Failed to remove pane from API:', e);
+      }
+    }
+    
     setDesktops((prev) =>
       prev.map((d) =>
         d.id === activeDesktopId
@@ -154,27 +266,50 @@ export default function App() {
     }
   };
 
-  const handleAddDesktop = () => {
-    const newId = generateId();
-    const newDesktop: DesktopState = {
-      id: newId,
-      name: `Desktop ${desktops.length + 1}`,
-      windows: [],
-      wallpaper: 'default',
-      activeConversationId: null,
-    };
-    setDesktops((prev) => [...prev, newDesktop]);
-    setActiveDesktopId(newId);
+  const handleAddDesktop = async () => {
+    const name = `Desktop ${desktops.length + 1}`;
+    try {
+      const group = await groupsApi.create(name);
+      const newDesktop: DesktopState = {
+        id: `desktop-${group.id}`,
+        groupId: group.id,
+        name: group.name,
+        windows: [],
+        wallpaper: 'default',
+        activeConversationId: null,
+      };
+      setDesktops((prev) => [...prev, newDesktop]);
+      setActiveDesktopId(newDesktop.id);
+    } catch (e) {
+      console.error('Failed to create desktop:', e);
+    }
   };
 
-  const handleRenameDesktop = (id: string, name: string) => {
+  const handleRenameDesktop = async (id: string, name: string) => {
+    const desktop = desktops.find((d) => d.id === id);
+    if (desktop?.groupId) {
+      try {
+        await groupsApi.update(desktop.groupId, name);
+      } catch (e) {
+        console.error('Failed to rename desktop:', e);
+      }
+    }
     setDesktops((prev) =>
       prev.map((d) => (d.id === id ? { ...d, name } : d))
     );
   };
 
-  const handleRemoveDesktop = (id: string) => {
+  const handleRemoveDesktop = async (id: string) => {
     if (desktops.length <= 1) return;
+    
+    const desktop = desktops.find((d) => d.id === id);
+    if (desktop?.groupId) {
+      try {
+        await groupsApi.delete(desktop.groupId);
+      } catch (e) {
+        console.error('Failed to delete desktop:', e);
+      }
+    }
     
     const newDesktops = desktops.filter((d) => d.id !== id);
     setDesktops(newDesktops);

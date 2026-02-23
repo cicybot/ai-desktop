@@ -16,6 +16,7 @@ export interface WindowState {
 
 export interface DesktopState {
   id: string;
+  groupId: number | null;
   name: string;
   windows: WindowState[];
   wallpaper: string;
