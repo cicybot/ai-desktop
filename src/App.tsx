@@ -288,6 +288,9 @@ export default function App() {
     }
 
     const window = activeDesktop.windows.find((w) => w.id === id);
+    if (window && updates.title && window.type === 'ttyd') {
+      tmuxApi.renamePane(id, updates.title).catch(e => console.error('Failed to rename pane:', e));
+    }
     if (window && (updates.x !== undefined || updates.y !== undefined || updates.width !== undefined || updates.height !== undefined || updates.zIndex !== undefined)) {
       try {
         await groupsApi.updatePaneLayout(activeDesktop.groupId, id, {
