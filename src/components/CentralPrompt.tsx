@@ -179,7 +179,7 @@ export function CentralPrompt({ onSendMessage, groupId, userPerms }: CentralProm
 
   return (
     <div className={cn(
-      "absolute z-40 pointer-events-none transition-all duration-300",
+      "absolute z-[200] pointer-events-none transition-all duration-300",
       hasMessages 
         ? "bottom-6 left-1/2 -translate-x-1/2 w-full max-w-3xl px-6"
         : "inset-0 flex flex-col items-center justify-center"

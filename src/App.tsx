@@ -988,15 +988,6 @@ export default function App() {
         )}
 
         <div className="flex-1 relative">
-            {/* CentralPrompt - 空桌面时居中显示 */}
-            {showCentralPrompt && (
-                <CentralPrompt 
-                  onSendMessage={handleSendMessage} 
-                  groupId={activeDesktop?.groupId || null}
-                  userPerms={userPerms}
-                />
-            )}
-
             {desktops.map((desktop) => (
               <div key={desktop.id} style={{ display: desktop.id === activeDesktopId ? 'block' : 'none' }} className="absolute inset-0">
                 <Desktop
@@ -1012,6 +1003,15 @@ export default function App() {
                 />
               </div>
             ))}
+            
+            {/* CentralPrompt - 空桌面时居中显示，渲染在 Desktop 之后确保在最上层 */}
+            {showCentralPrompt && (
+                <CentralPrompt 
+                  onSendMessage={handleSendMessage} 
+                  groupId={activeDesktop?.groupId || null}
+                  userPerms={userPerms}
+                />
+            )}
             
             <Dock
                 windows={activeDesktop.windows}
