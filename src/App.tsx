@@ -958,8 +958,8 @@ export default function App() {
         user={user}
         onOpenLogin={() => setIsLoginOpen(true)}
         onLogout={() => {
-            setUser(null);
-            setIsLoginOpen(false);
+            localStorage.removeItem('token');
+            window.location.href = window.location.pathname;
         }}
         onUpgrade={(planId) => {
             if (user) {
@@ -1044,14 +1044,13 @@ export default function App() {
         isOpen={isLoginOpen}
         onClose={() => setIsLoginOpen(false)}
         user={user}
-        onLogin={(u) => {
-            setUser(u);
-            setIsLoginOpen(false);
+        onLogin={() => {
+            // 登录成功后刷新页面，走完整 init 流程
+            window.location.href = window.location.pathname;
         }}
         onLogout={() => {
-            setUser(null);
             localStorage.removeItem('token');
-            setIsLoginOpen(false);
+            window.location.href = window.location.pathname;
         }}
         onUpgrade={() => {}}
       />

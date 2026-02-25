@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { X, Key } from 'lucide-react';
-import { User } from '../types';
 import { authApi } from '../lib/api';
 import { Logo } from './Logo';
 
@@ -8,7 +7,7 @@ interface LoginDialogProps {
   isOpen: boolean;
   onClose: () => void;
   user: User | null;
-  onLogin: (user: User) => void;
+  onLogin: () => void;
   onLogout: () => void;
   onUpgrade: (planId: 'free' | 'pro' | 'enterprise') => void;
 }
@@ -28,13 +27,7 @@ export function LoginDialog({ isOpen, onClose, user, onLogin, onLogout }: LoginD
       localStorage.setItem('token', token.trim());
       const res = await authApi.verify();
       if (res.valid) {
-        onLogin({
-          id: 'u-token',
-          name: 'Admin',
-          email: '',
-          plan: 'pro',
-          avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=admin`,
-        });
+        onLogin();
       } else {
         setError('Token 无效');
         localStorage.removeItem('token');
