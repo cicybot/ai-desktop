@@ -184,7 +184,7 @@ export function CentralPrompt({ onSendMessage, groupId, userPerms }: CentralProm
         ? "bottom-6 left-1/2 -translate-x-1/2 w-full max-w-3xl px-6"
         : "inset-0 flex flex-col items-center justify-center"
     )}>
-      <div className="w-full pointer-events-auto">
+      <div className="w-full max-w-2xl mx-auto pointer-events-auto">
         {!hasMessages && (
           <div className="text-center mb-8">
             <div className="flex items-center justify-center gap-3 mb-4">
