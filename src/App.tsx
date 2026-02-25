@@ -54,9 +54,11 @@ export default function App() {
   // Check auth first, then load state
   useEffect(() => {
     const init = async () => {
-      // 1. 检查 URL 或 localStorage 中的 token
+      // Step 3: 解析 URL 参数 token 和 group
       const params = new URLSearchParams(window.location.search);
       const urlToken = params.get('token');
+      const urlGroup = params.get('group');
+      
       if (urlToken) {
         localStorage.setItem('token', urlToken);
         window.history.replaceState({}, '', window.location.pathname);
@@ -69,7 +71,7 @@ export default function App() {
         return;
       }
 
-      // 2. 验证 token
+      // 验证 token 并获取 group_id
       try {
         const result = await authApi.verify();
         if (!result.valid) {
@@ -78,9 +80,24 @@ export default function App() {
           setIsLoginOpen(true);
           return;
         }
-        // Extract permissions and group_id
+        
+        const tokenGroupId = result.group_id || null;
         setUserPerms(result.perms || []);
-        setUserGroupId(result.group_id || null);
+        setUserGroupId(tokenGroupId);
+        
+        // Step 3: 校验 URL group 参数与 token group_id 一致
+        if (urlGroup && tokenGroupId !== null) {
+          const urlGroupNum = parseInt(urlGroup, 10);
+          if (urlGroupNum !== tokenGroupId) {
+            console.error('[Auth] URL group mismatch:', urlGroupNum, 'vs token group_id:', tokenGroupId);
+            alert('Access denied: group mismatch');
+            localStorage.removeItem('token');
+            setIsLoading(false);
+            setIsLoginOpen(true);
+            return;
+          }
+        }
+        
         setUser({
           id: 'u-token',
           name: 'Admin',
@@ -95,7 +112,7 @@ export default function App() {
         return;
       }
 
-      // 3. Token 有效，加载桌面数据
+      // Step 4: 按 group_id 加载窗口
       try {
         const [groupsRes, ttydRes] = await Promise.all([
           groupsApi.list(),
@@ -109,19 +126,17 @@ export default function App() {
         }
 
         if (groupsRes.groups && groupsRes.groups.length > 0) {
-          // Filter groups by userGroupId if token is bound to specific group
+          // Step 4: 客户 token 只加载自己的 group，管理员加载全部
           let filteredGroups = groupsRes.groups;
           if (userGroupId !== null) {
             filteredGroups = groupsRes.groups.filter((g: Group) => g.id === userGroupId);
           }
           
           if (filteredGroups.length === 0) {
-            // No accessible groups, use default desktop
             setDesktops([DEFAULT_DESKTOP]);
             setIsLoading(false);
             return;
           }
-          
           
           const loadedDesktops: DesktopState[] = await Promise.all(
             filteredGroups.map(async (group: Group) => {
@@ -199,6 +214,19 @@ export default function App() {
   }, [desktops, activeDesktopId, user, isLoading]);
 
   const activeDesktop = desktops.find((d) => d.id === activeDesktopId) || desktops[0];
+  
+  // Safety check: if no desktop exists, show loading or error
+  if (!activeDesktop) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-gray-900 text-white">
+        <div className="text-center">
+          <div className="text-xl mb-2">Loading desktop...</div>
+          <div className="text-sm text-gray-400">Please wait</div>
+        </div>
+      </div>
+    );
+  }
+  
   const activeConversationId = activeDesktop.activeConversationId;
   const activeConversation = conversations.find(c => c.id === activeConversationId);
 
@@ -717,12 +745,16 @@ export default function App() {
     }
   };
 
-  // Check if we should show the central prompt
-  // Show if:
-  // 1. No windows on the active desktop
-  // 2. No conversation history for THIS desktop
+  // Check if we should show the central prompt (empty desktop, no windows)
+  const showCentralPrompt = activeDesktop.windows.length === 0;
   const activeDesktopConversations = conversations.filter(c => c.desktopId === activeDesktopId);
-  const showCentralPrompt = activeDesktop.windows.length === 0 && activeDesktopConversations.length === 0;
+  
+  // Auto-open sidebar when there are windows
+  useEffect(() => {
+    if (activeDesktop.windows.length > 0 && !isSidebarOpen) {
+      setIsSidebarOpen(true);
+    }
+  }, [activeDesktop.windows.length]);
 
   const handleLayoutSplit = (direction: 'h' | 'v') => {
     const wins = activeDesktop.windows.filter(w => !w.isMinimized);
@@ -951,18 +983,19 @@ export default function App() {
                 onSelectConversation={setActiveConversationId}
                 onSendMessage={handleSendMessage}
                 onClose={() => setIsSidebarOpen(false)}
+                groupId={activeDesktop.groupId}
             />
         )}
 
         <div className="flex-1 relative">
-            {/* CentralPrompt hidden - planned for future */}
-            {/* {showCentralPrompt && (
+            {/* CentralPrompt - 空桌面时居中显示 */}
+            {showCentralPrompt && (
                 <CentralPrompt 
                   onSendMessage={handleSendMessage} 
                   groupId={activeDesktop?.groupId || null}
                   userPerms={userPerms}
                 />
-            )} */}
+            )}
 
             {desktops.map((desktop) => (
               <div key={desktop.id} style={{ display: desktop.id === activeDesktopId ? 'block' : 'none' }} className="absolute inset-0">
@@ -1002,6 +1035,7 @@ export default function App() {
                 onSelectConversation={setActiveConversationId}
                 onSendMessage={handleSendMessage}
                 onClose={() => setIsSidebarOpen(false)}
+                groupId={activeDesktop.groupId}
             />
         )}
       </div>

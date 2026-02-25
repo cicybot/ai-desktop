@@ -462,14 +462,14 @@ export function TopBar({
           </div>
         )}
 
-        {/* Sidebar Toggle - hidden */}
-        {/* <button 
+        {/* Sidebar Toggle */}
+        <button 
           onClick={onToggleSidebar}
           className={cn("hover:text-white transition-colors flex items-center justify-center", isSidebarOpen && "text-blue-400")}
-          title="Toggle Sidebar"
+          title="Toggle Copilot"
         >
           <SidebarIcon size={18} />
-        </button> */}
+        </button>
 
         {/* Settings Menu */}
         <div className="relative flex items-center">

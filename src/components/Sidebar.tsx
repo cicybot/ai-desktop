@@ -12,6 +12,7 @@ interface SidebarProps {
   onSelectConversation: (id: string) => void;
   onSendMessage: (content: string) => void;
   onClose: () => void;
+  groupId: number | null;
 }
 
 export function Sidebar({
@@ -23,12 +24,59 @@ export function Sidebar({
   onSelectConversation,
   onSendMessage,
   onClose,
+  groupId,
 }: SidebarProps) {
   const [input, setInput] = useState('');
   const [showHistory, setShowHistory] = useState(false);
+  const [isConnected, setIsConnected] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const wsRef = useRef<WebSocket | null>(null);
 
   const activeConversation = conversations.find(c => c.id === activeConversationId);
+
+  // WebSocket 连接到 /ws/agent/{group_id}
+  useEffect(() => {
+    if (!groupId || !isOpen) return;
+
+    const token = localStorage.getItem('token');
+    if (!token) return;
+
+    const wsUrl = `wss://g-fast-api.cicy.de5.net/ws/agent/${groupId}?token=${token}`;
+    const ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      console.log('[Sidebar] WebSocket connected to group', groupId);
+      setIsConnected(true);
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'message' && data.content) {
+          // 通过 onSendMessage 回调让 App.tsx 处理消息
+          // 这里不直接修改 conversations，由父组件统一管理
+        }
+      } catch (e) {
+        console.error('[Sidebar] Failed to parse message:', e);
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error('[Sidebar] WebSocket error:', error);
+    };
+
+    ws.onclose = () => {
+      console.log('[Sidebar] WebSocket closed');
+      setIsConnected(false);
+    };
+
+    wsRef.current = ws;
+
+    return () => {
+      ws.close();
+      wsRef.current = null;
+    };
+  }, [groupId, isOpen]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -36,6 +84,16 @@ export function Sidebar({
 
   const handleSend = () => {
     if (!input.trim()) return;
+    
+    // 发送到 WebSocket
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'prompt',
+        content: input
+      }));
+    }
+    
+    // 调用父组件回调
     onSendMessage(input);
     setInput('');
   };
@@ -130,6 +188,11 @@ export function Sidebar({
                 >
                   <Send size={14} />
                 </button>
+              </div>
+              {/* Connection Status */}
+              <div className="flex items-center gap-1 mt-2 text-[10px] text-gray-600">
+                <div className={cn("w-1.5 h-1.5 rounded-full", isConnected ? "bg-green-500" : "bg-red-500")} />
+                <span>{isConnected ? "Connected" : "Disconnected"}</span>
               </div>
             </div>
           </>
