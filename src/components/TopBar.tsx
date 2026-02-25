@@ -33,6 +33,8 @@ interface TopBarProps {
   onOpenLogin: () => void;
   onLogout: () => void;
   onUpgrade: (planId: 'free' | 'pro' | 'enterprise') => void;
+  userPerms?: string[];
+  userGroupId?: number | null;
   isCreatingAgent?: boolean;
   setLoading: (msg: string | false) => void;
 }
@@ -91,9 +93,13 @@ export function TopBar({
   onOpenLogin,
   onLogout,
   onUpgrade,
+  userPerms = [],
+  userGroupId = null,
   isCreatingAgent,
   setLoading,
 }: TopBarProps) {
+  const hasPermission = (perm: string) => userPerms.includes(perm);
+
   const [activeMenu, setActiveMenu] = useState<'chats' | 'apps' | 'desktops' | 'settings' | 'user' | null>(null);
   const [urlInput, setUrlInput] = useState('');
   const [editingDesktopId, setEditingDesktopId] = useState<string | null>(null);
@@ -221,9 +227,10 @@ export function TopBar({
         {/* Desktop Switcher Button */}
         <div className="relative">
             <button
-            onClick={() => toggleMenu('desktops')}
+            onClick={() => { if (userGroupId === null) toggleMenu('desktops'); }}
             className={cn(
                 "flex items-center gap-2 px-3 py-1.5 rounded bg-[#1c1f26] border border-[#2a2e35] hover:bg-[#252932] transition-colors text-gray-300",
+                userGroupId !== null && "opacity-50 cursor-not-allowed",
                 activeMenu === 'desktops' && "bg-[#252932] text-white border-gray-600"
             )}
             >

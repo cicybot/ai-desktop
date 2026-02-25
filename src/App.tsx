@@ -41,11 +41,15 @@ export default function App() {
 
   // User State
   const [user, setUser] = useState<User | null>(null);
+  const [userPerms, setUserPerms] = useState<string[]>([]);
+  const [userGroupId, setUserGroupId] = useState<number | null>(null);
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [agentStatus, setAgentStatus] = useState<'connected' | 'disconnected' | 'connecting'>('disconnected');
   const agentRef = useRef<DesktopAgent | null>(null);
   // 用 ref 存最新的 handler，避免 WS 回调闭包问题
   const actionHandlerRef = useRef<(action: AgentAction) => void>(() => {});
+
+  const hasPermission = (perm: string) => userPerms.includes(perm);
 
   // Check auth first, then load state
   useEffect(() => {
@@ -74,6 +78,9 @@ export default function App() {
           setIsLoginOpen(true);
           return;
         }
+        // Extract permissions and group_id
+        setUserPerms(result.perms || []);
+        setUserGroupId(result.group_id || null);
         setUser({
           id: 'u-token',
           name: 'Admin',
@@ -102,8 +109,22 @@ export default function App() {
         }
 
         if (groupsRes.groups && groupsRes.groups.length > 0) {
+          // Filter groups by userGroupId if token is bound to specific group
+          let filteredGroups = groupsRes.groups;
+          if (userGroupId !== null) {
+            filteredGroups = groupsRes.groups.filter((g: Group) => g.id === userGroupId);
+          }
+          
+          if (filteredGroups.length === 0) {
+            // No accessible groups, use default desktop
+            setDesktops([DEFAULT_DESKTOP]);
+            setIsLoading(false);
+            return;
+          }
+          
+          
           const loadedDesktops: DesktopState[] = await Promise.all(
-            groupsRes.groups.map(async (group: Group) => {
+            filteredGroups.map(async (group: Group) => {
               try {
                 const detail = await groupsApi.get(group.id);
                 const windows: WindowState[] = (detail.panes || []).map((p: any) => {
@@ -913,6 +934,9 @@ export default function App() {
                 setUser({ ...user, plan: planId });
             }
         }}
+        userPerms={userPerms}
+        userGroupId={userGroupId}
+
       />
       
       <div className="flex-1 flex overflow-hidden relative">
@@ -933,7 +957,11 @@ export default function App() {
         <div className="flex-1 relative">
             {/* CentralPrompt hidden - planned for future */}
             {/* {showCentralPrompt && (
-                <CentralPrompt onSendMessage={handleSendMessage} />
+                <CentralPrompt 
+                  onSendMessage={handleSendMessage} 
+                  groupId={activeDesktop?.groupId || null}
+                  userPerms={userPerms}
+                />
             )} */}
 
             {desktops.map((desktop) => (
