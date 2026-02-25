@@ -41,7 +41,10 @@ export function Sidebar({
     const token = localStorage.getItem('token');
     if (!token) return;
 
-    const wsUrl = `wss://g-fast-api.cicy.de5.net/ws/agent/${groupId}?token=${token}`;
+    // Dynamic WebSocket URL based on current location
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.hostname;
+    const wsUrl = `${protocol}//g-fast-api.${host.replace('desktop.', '')}/ws/agent/${groupId}?token=${token}`;
     const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
@@ -53,8 +56,8 @@ export function Sidebar({
       try {
         const data = JSON.parse(event.data);
         if (data.type === 'message' && data.content) {
-          // 通过 onSendMessage 回调让 App.tsx 处理消息
-          // 这里不直接修改 conversations，由父组件统一管理
+          // Trigger parent callback to add assistant message
+          onSendMessage(`[Assistant] ${data.content}`);
         }
       } catch (e) {
         console.error('[Sidebar] Failed to parse message:', e);
@@ -76,7 +79,7 @@ export function Sidebar({
       ws.close();
       wsRef.current = null;
     };
-  }, [groupId, isOpen]);
+  }, [groupId, isOpen, onSendMessage]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -85,7 +88,7 @@ export function Sidebar({
   const handleSend = () => {
     if (!input.trim()) return;
     
-    // 发送到 WebSocket
+    // Send to WebSocket only
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
         type: 'prompt',
@@ -93,8 +96,6 @@ export function Sidebar({
       }));
     }
     
-    // 调用父组件回调
-    onSendMessage(input);
     setInput('');
   };
 

@@ -36,7 +36,10 @@ export function CentralPrompt({ onSendMessage, groupId, userPerms }: CentralProm
     const token = localStorage.getItem('token');
     if (!token) return;
 
-    const wsUrl = `wss://g-fast-api.cicy.de5.net/ws/agent/${groupId}?token=${token}`;
+    // Dynamic WebSocket URL based on current location
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.hostname;
+    const wsUrl = `${protocol}//g-fast-api.${host.replace('desktop.', '')}/ws/agent/${groupId}?token=${token}`;
     const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
@@ -93,7 +96,7 @@ export function CentralPrompt({ onSendMessage, groupId, userPerms }: CentralProm
     };
     setMessages(prev => [...prev, userMessage]);
 
-    // Send to WebSocket
+    // Send to WebSocket only
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
         type: 'prompt',
@@ -101,8 +104,6 @@ export function CentralPrompt({ onSendMessage, groupId, userPerms }: CentralProm
       }));
     }
 
-    // Also call the callback
-    onSendMessage(input);
     setInput('');
   };
 
@@ -148,7 +149,9 @@ export function CentralPrompt({ onSendMessage, groupId, userPerms }: CentralProm
       const formData = new FormData();
       formData.append('audio', audioBlob, 'recording.webm');
 
-      const response = await fetch('http://localhost:15003/transcribe', {
+      // Dynamic STT service URL
+      const sttUrl = import.meta.env.VITE_STT_URL || `${window.location.protocol}//${window.location.hostname}:15003`;
+      const response = await fetch(`${sttUrl}/transcribe`, {
         method: 'POST',
         body: formData
       });
