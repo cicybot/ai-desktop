@@ -208,6 +208,7 @@ export function TopBar({
   };
 
   const activeDesktop = desktops.find(d => d.id === activeDesktopId);
+  const openPaneIds = new Set(activeDesktop?.windows.map(w => w.id) || []);
 
   return (
     <div className="h-12 bg-[#0f1115] border-b border-[#2a2e35] flex items-center px-4 select-none z-[1000] relative text-gray-400 text-sm font-medium" ref={menuRef}>
@@ -215,7 +216,7 @@ export function TopBar({
       {/* Left: Logo & Desktop Switcher */}
       <div className="flex items-center gap-4">
         <Logo size="sm" showText={false} />
-        <span className="text-xs text-gray-500">v0.2.0</span>
+        <span className="text-xs text-gray-500">v0.2.1</span>
 
         {/* Desktop Switcher Button */}
         <div className="relative">
@@ -320,7 +321,7 @@ export function TopBar({
                 ) : agents.filter(a => !agentSearch || (a.title || a.pane_id).toLowerCase().includes(agentSearch.toLowerCase())).map((a) => (
                     <div
                     key={a.pane_id}
-                    className="group w-full text-left px-3 py-2 hover:bg-[#2a2e35] flex items-center gap-2 text-gray-400 hover:text-white transition-colors cursor-pointer"
+                    className={cn("group w-full text-left px-3 py-2 hover:bg-[#2a2e35] flex items-center gap-2 transition-colors cursor-pointer", openPaneIds.has(a.pane_id) ? "text-white bg-[#252932]" : "text-gray-400 hover:text-white")}
                     onClick={() => {
                         if (editingAgentId !== a.pane_id) {
                             onAddWindow('ttyd', undefined, a.title || a.pane_id, a.pane_id);
@@ -328,7 +329,7 @@ export function TopBar({
                         }
                     }}
                     >
-                    <Bot size={14} className="text-blue-400 shrink-0" />
+                    <Bot size={14} className={openPaneIds.has(a.pane_id) ? "text-green-400 shrink-0" : "text-blue-400 shrink-0"} />
                     {editingAgentId === a.pane_id ? (
                         <input
                             type="text"

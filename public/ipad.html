@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iPad Live View</title>
+<style>
+  body { margin: 0; background: #111; display: flex; flex-direction: column; align-items: center; min-height: 100vh; font-family: -apple-system, sans-serif; }
+  img { max-width: 100%; max-height: calc(100vh - 60px); object-fit: contain; margin-top: 10px; border-radius: 8px; }
+  button { margin: 12px; padding: 12px 32px; font-size: 18px; background: #2563eb; color: #fff; border: none; border-radius: 8px; cursor: pointer; }
+  button:active { background: #1d4ed8; }
+  #status { color: #888; font-size: 14px; }
+</style>
+</head>
+<body>
+  <button onclick="refresh()">🔄 Refresh Screenshot</button>
+  <span id="status"></span>
+  <img id="ss" src="/api/screenshot" onclick="refresh()">
+  <script>
+    function refresh() {
+      var s = document.getElementById('status');
+      s.textContent = 'Loading...';
+      var img = document.getElementById('ss');
+      img.src = '/api/screenshot?t=' + Date.now();
+      img.onload = function() { s.textContent = new Date().toLocaleTimeString(); };
+      img.onerror = function() { s.textContent = 'Failed'; };
+    }
+  </script>
+</body>
+</html>

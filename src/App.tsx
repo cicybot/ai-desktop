@@ -271,6 +271,15 @@ export default function App() {
   };
 
   const handleUpdateWindow = async (id: string, updates: Partial<WindowState>) => {
+    // 限制窗口位置：x >= 0, y >= -20 (保证顶部栏至少 20px 可见)
+    const sanitizedUpdates = { ...updates };
+    if (sanitizedUpdates.x !== undefined) {
+      sanitizedUpdates.x = Math.max(0, sanitizedUpdates.x);
+    }
+    if (sanitizedUpdates.y !== undefined) {
+      sanitizedUpdates.y = Math.max(-20, sanitizedUpdates.y);
+    }
+
     if (!activeDesktop.groupId) {
       setDesktops((prev) =>
         prev.map((d) =>
@@ -278,7 +287,7 @@ export default function App() {
             ? {
                 ...d,
                 windows: d.windows.map((w) =>
-                  w.id === id ? { ...w, ...updates } : w
+                  w.id === id ? { ...w, ...sanitizedUpdates } : w
                 ),
               }
             : d
@@ -288,17 +297,17 @@ export default function App() {
     }
 
     const window = activeDesktop.windows.find((w) => w.id === id);
-    if (window && updates.title && window.type === 'ttyd') {
-      tmuxApi.renamePane(id, updates.title).catch(e => console.error('Failed to rename pane:', e));
+    if (window && sanitizedUpdates.title && window.type === 'ttyd') {
+      tmuxApi.renamePane(id, sanitizedUpdates.title).catch(e => console.error('Failed to rename pane:', e));
     }
-    if (window && (updates.x !== undefined || updates.y !== undefined || updates.width !== undefined || updates.height !== undefined || updates.zIndex !== undefined)) {
+    if (window && (sanitizedUpdates.x !== undefined || sanitizedUpdates.y !== undefined || sanitizedUpdates.width !== undefined || sanitizedUpdates.height !== undefined || sanitizedUpdates.zIndex !== undefined)) {
       try {
         await groupsApi.updatePaneLayout(activeDesktop.groupId, id, {
-          pos_x: updates.x ?? window.x,
-          pos_y: updates.y ?? window.y,
-          width: updates.width ?? window.width,
-          height: updates.height ?? window.height,
-          z_index: updates.zIndex ?? window.zIndex,
+          pos_x: sanitizedUpdates.x ?? window.x,
+          pos_y: sanitizedUpdates.y ?? window.y,
+          width: sanitizedUpdates.width ?? window.width,
+          height: sanitizedUpdates.height ?? window.height,
+          z_index: sanitizedUpdates.zIndex ?? window.zIndex,
         });
       } catch (e) {
         console.error('Failed to update pane layout:', e);
@@ -311,7 +320,7 @@ export default function App() {
           ? {
               ...d,
               windows: d.windows.map((w) =>
-                w.id === id ? { ...w, ...updates } : w
+                w.id === id ? { ...w, ...sanitizedUpdates } : w
               ),
             }
           : d
@@ -354,7 +363,7 @@ export default function App() {
       groupsApi.removePane(activeDesktop.groupId, id).catch(() => {});
     }
     if (win?.type === 'ttyd') {
-      tmuxApi.deletePane(id).catch(() => {});
+      // Only remove from group, don't delete the pane/agent
     }
   };
 

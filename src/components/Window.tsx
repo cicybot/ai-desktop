@@ -1,5 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { motion, useDragControls } from 'motion/react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ResizableBox, ResizeCallbackData } from 'react-resizable';
 import { X, Minus, Maximize2, Minimize2, ExternalLink, RotateCw } from 'lucide-react';
 import { WindowState } from '../types';
@@ -30,8 +29,8 @@ export const Window: React.FC<WindowProps> = ({
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState(window.title);
   const [size, setSize] = useState({ width: window.width, height: window.height });
-  const dragControls = useDragControls();
   const nodeRef = useRef<HTMLDivElement>(null);
+  const dragStart = useRef<{ x: number; y: number; wx: number; wy: number } | null>(null);
 
   // Sync size from props when not resizing
   useEffect(() => {
@@ -49,12 +48,32 @@ export const Window: React.FC<WindowProps> = ({
     onUpdate(window.id, { width: data.size.width, height: data.size.height });
   };
 
-  const handleDragEnd = (event: any, info: any) => {
+  const handleDragStart = useCallback((e: React.PointerEvent) => {
+    if (window.isMaximized) return;
+    e.preventDefault();
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    dragStart.current = { x: e.clientX, y: e.clientY, wx: window.x, wy: window.y };
+    setIsDragging(true);
+  }, [window.x, window.y, window.isMaximized]);
+
+  const handleDragMove = useCallback((e: React.PointerEvent) => {
+    if (!dragStart.current) return;
+    const newX = Math.max(0, dragStart.current.wx + e.clientX - dragStart.current.x);
+    const newY = Math.max(0, dragStart.current.wy + e.clientY - dragStart.current.y);
+    if (nodeRef.current) {
+      nodeRef.current.style.left = newX + 'px';
+      nodeRef.current.style.top = newY + 'px';
+    }
+  }, []);
+
+  const handleDragEnd = useCallback((e: React.PointerEvent) => {
+    if (!dragStart.current) return;
+    const newX = Math.max(0, dragStart.current.wx + e.clientX - dragStart.current.x);
+    const newY = Math.max(0, dragStart.current.wy + e.clientY - dragStart.current.y);
+    dragStart.current = null;
     setIsDragging(false);
-    const newX = window.x + info.offset.x;
-    const newY = window.y + info.offset.y;
     onUpdate(window.id, { x: newX, y: newY });
-  };
+  }, [window.id, onUpdate]);
 
   if (window.isMinimized) {
     return null;
@@ -71,11 +90,10 @@ export const Window: React.FC<WindowProps> = ({
         <div
           className={`h-9 bg-gray-200/80 border-b border-gray-300/50 flex items-center justify-between px-3 shrink-0 select-none ${isDragging ? 'cursor-move' : 'cursor-grab active:cursor-move'}`}
           onPointerDown={(e) => {
-            if (!window.isMaximized) {
-                dragControls.start(e);
-            }
+            handleDragStart(e);
           }}
-          onDoubleClick={undefined}
+          onPointerMove={handleDragMove}
+          onPointerUp={handleDragEnd}
         >
             {/* Window Controls */}
             <div className="flex items-center gap-0 group z-50" onPointerDown={(e) => e.stopPropagation()}>
@@ -176,47 +194,41 @@ export const Window: React.FC<WindowProps> = ({
 
   if (window.isMaximized) {
     return (
-        <motion.div
+        <div
             ref={nodeRef}
-            initial={false}
-            animate={{ x: 0, y: 0, width: '100%', height: '100%' }}
-            transition={{ duration: 0.2 }}
             style={{
                 position: 'absolute',
                 zIndex: window.zIndex,
                 top: 0,
                 left: 0,
+                width: '100%',
+                height: '100%',
             }}
             className={cn(
-                "absolute flex flex-col bg-white/80 backdrop-blur-md shadow-none border-none overflow-hidden",
+                "absolute flex flex-col bg-white shadow-none border-none overflow-hidden",
                 isActive ? "z-[50]" : "z-[10]"
             )}
             onPointerDown={() => onFocus(window.id)}
         >
             {WindowContent}
-        </motion.div>
+        </div>
     );
   }
 
   return (
-    <motion.div
+    <div
       ref={nodeRef}
-      drag
-      dragListener={false}
-      dragControls={dragControls}
-      dragMomentum={false}
-      onDragStart={() => setIsDragging(true)}
-      onDragEnd={handleDragEnd}
-      initial={{ x: window.x, y: window.y }}
-      animate={{ x: window.x, y: window.y, width: size.width, height: size.height }}
-      transition={{ duration: 0 }}
       style={{
         position: 'absolute',
         zIndex: window.zIndex,
+        left: window.x,
+        top: window.y,
+        width: size.width,
+        height: size.height,
       }}
       className={cn(
-        "absolute flex flex-col bg-white/80 backdrop-blur-md rounded-lg shadow-2xl border border-white/20 overflow-hidden",
-        isActive ? "ring-1 ring-black/5 shadow-xl" : "opacity-90 shadow-md"
+        "absolute flex flex-col bg-white rounded-lg shadow-lg border border-gray-200 overflow-hidden",
+        isActive ? "shadow-xl" : "opacity-95 shadow-md"
       )}
       onPointerDown={() => onFocus(window.id)}
     >
@@ -242,6 +254,6 @@ export const Window: React.FC<WindowProps> = ({
       >
         {WindowContent}
       </ResizableBox>
-    </motion.div>
+    </div>
   );
 }
