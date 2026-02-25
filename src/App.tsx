@@ -5,6 +5,7 @@ import { TopBar } from './components/TopBar';
 import { Sidebar } from './components/Sidebar';
 import { CentralPrompt } from './components/CentralPrompt';
 import { LoginDialog } from './components/LoginDialog';
+import { TokenManager } from './components/TokenManager';
 import { DesktopState, WindowState, WindowType, getTtydUrl, Conversation, Message, User } from './types';
 import { groupsApi, authApi, Group, tmuxApi, ttydApi } from './lib/api';
 import { DesktopAgent, AgentAction } from './lib/agent';
@@ -44,6 +45,7 @@ export default function App() {
   const [userPerms, setUserPerms] = useState<string[]>([]);
   const [userGroupId, setUserGroupId] = useState<number | null>(null);
   const [isLoginOpen, setIsLoginOpen] = useState(false);
+  const [isTokenManagerOpen, setIsTokenManagerOpen] = useState(false);
   const [agentStatus, setAgentStatus] = useState<'connected' | 'disconnected' | 'connecting'>('disconnected');
   const agentRef = useRef<DesktopAgent | null>(null);
   // 用 ref 存最新的 handler，避免 WS 回调闭包问题
@@ -61,7 +63,7 @@ export default function App() {
       
       if (urlToken) {
         localStorage.setItem('token', urlToken);
-        window.history.replaceState({}, '', window.location.pathname);
+        // 保留 URL 参数，不清除
       }
 
       const savedToken = localStorage.getItem('token');
@@ -968,7 +970,7 @@ export default function App() {
         }}
         userPerms={userPerms}
         userGroupId={userGroupId}
-
+        onOpenTokenManager={() => setIsTokenManagerOpen(true)}
       />
       
       <div className="flex-1 flex overflow-hidden relative">
@@ -1054,6 +1056,7 @@ export default function App() {
         }}
         onUpgrade={() => {}}
       />
+      {isTokenManagerOpen && <TokenManager onClose={() => setIsTokenManagerOpen(false)} />}
     </div>
   );
 }

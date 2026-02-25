@@ -25,7 +25,7 @@ export function Dock({ windows, activeWindowId, onAddWindow, onActivateWindow }:
   };
 
   return (
-    <div className="absolute bottom-0 left-0 right-0 h-16 z-[100] flex justify-center items-end group pointer-events-none">
+    <div className="absolute bottom-0 left-0 right-0 h-16 z-[9999] flex justify-center items-end group pointer-events-none">
       <div className="absolute bottom-0 w-full h-4 pointer-events-auto" />
       <div className="mb-4 pointer-events-auto transition-transform duration-300 translate-y-[120%] group-hover:translate-y-0">
         <div className="flex items-end gap-1 px-3 py-2 bg-gray-900/80 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl">

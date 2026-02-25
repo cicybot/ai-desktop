@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Terminal, Globe, Plus, RefreshCw, Monitor, Trash2, ChevronDown, Settings, LogOut, Sidebar as SidebarIcon, AlignLeft, AlignRight, Wifi, LayoutGrid, User as UserIcon, Check, Bot, Loader2, RotateCw, Pencil, Columns, Rows } from 'lucide-react';
+import { Terminal, Globe, Plus, RefreshCw, Monitor, Trash2, ChevronDown, LogOut, Sidebar as SidebarIcon, AlignLeft, AlignRight, Wifi, LayoutGrid, User as UserIcon, Bot, Loader2, RotateCw, Pencil, Columns, Rows } from 'lucide-react';
 import axios from 'axios';
 import { cn } from '../lib/utils';
-import { WindowType, DesktopState, User, PLANS } from '../types';
+import { WindowType, DesktopState, User } from '../types';
 import { Logo } from './Logo';
 import { ttydApi, appsApi, tmuxApi } from '../lib/api';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -37,6 +37,7 @@ interface TopBarProps {
   userGroupId?: number | null;
   isCreatingAgent?: boolean;
   setLoading: (msg: string | false) => void;
+  onOpenTokenManager?: () => void;
 }
 
 function NetworkMonitor() {
@@ -97,6 +98,7 @@ export function TopBar({
   userGroupId = null,
   isCreatingAgent,
   setLoading,
+  onOpenTokenManager,
 }: TopBarProps) {
   const hasPermission = (perm: string) => userPerms.includes(perm);
 
@@ -471,60 +473,7 @@ export function TopBar({
           <SidebarIcon size={18} />
         </button>
 
-        {/* Settings Menu */}
-        <div className="relative flex items-center">
-          <button 
-            onClick={() => toggleMenu('settings')}
-            className={cn("hover:text-white transition-colors flex items-center justify-center", activeMenu === 'settings' && "text-white")}
-          >
-            <Settings size={18} />
-          </button>
-
-          {activeMenu === 'settings' && (
-            <div className="absolute top-full right-0 mt-2 w-48 bg-[#1c1f26] border border-[#2a2e35] rounded-lg shadow-xl overflow-hidden z-50 flex flex-col">
-              <div className="px-3 py-2 border-b border-[#2a2e35] text-xs text-gray-500 uppercase tracking-wider">
-                Settings
-              </div>
-              <div className="py-1">
-                <div className="px-3 py-2 text-sm text-gray-400">Sidebar Position</div>
-                <div className="flex px-2 pb-2 gap-1">
-                  <button
-                    onClick={() => {
-                      onSetSidebarPosition('left');
-                      setActiveMenu(null);
-                    }}
-                    className={cn(
-                      "flex-1 flex items-center justify-center gap-2 py-1.5 rounded border transition-colors",
-                      sidebarPosition === 'left' 
-                        ? "bg-[#252932] border-blue-500/50 text-white" 
-                        : "border-[#333] hover:bg-[#2a2e35] text-gray-400"
-                    )}
-                  >
-                    <AlignLeft size={14} />
-                    <span>Left</span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      onSetSidebarPosition('right');
-                      setActiveMenu(null);
-                    }}
-                    className={cn(
-                      "flex-1 flex items-center justify-center gap-2 py-1.5 rounded border transition-colors",
-                      sidebarPosition === 'right' 
-                        ? "bg-[#252932] border-blue-500/50 text-white" 
-                        : "border-[#333] hover:bg-[#2a2e35] text-gray-400"
-                    )}
-                  >
-                    <AlignRight size={14} />
-                    <span>Right</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* User Profile */}
+        {/* User Profile (merged with Settings) */}
         <div className="relative flex items-center">
             <button 
             onClick={() => user ? toggleMenu('user') : onOpenLogin()}
@@ -542,43 +491,58 @@ export function TopBar({
             </button>
 
             {activeMenu === 'user' && user && (
-            <div className="absolute top-full right-0 mt-2 w-64 bg-[#1c1f26] border border-[#2a2e35] rounded-lg shadow-xl overflow-hidden z-50 flex flex-col">
+            <div className="absolute top-full right-0 mt-2 w-56 bg-[#1c1f26] border border-[#2a2e35] rounded-lg shadow-xl overflow-hidden z-50 flex flex-col">
                 {/* User Info Header */}
-                <div className="p-4 border-b border-[#2a2e35]">
-                    <div className="font-bold text-white">{user.name}</div>
-                    <div className="text-xs text-gray-500">{user.email}</div>
-                    <div className="mt-2 text-xs bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded w-fit uppercase tracking-wider">{user.plan} Plan</div>
-                </div>
-                
-                {/* Plans */}
-                <div className="py-1 border-b border-[#2a2e35]">
-                    <div className="px-3 py-1 text-xs text-gray-500 uppercase tracking-wider">Switch Plan</div>
-                    {PLANS.map(plan => (
-                        <button
-                            key={plan.id}
-                            onClick={() => {
-                                onUpgrade(plan.id);
-                                setActiveMenu(null);
-                            }}
-                            className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-[#2a2e35] hover:text-white flex items-center justify-between group"
-                        >
-                            <span>{plan.name}</span>
-                            {user.plan === plan.id && <Check size={14} className="text-blue-400" />}
-                        </button>
-                    ))}
+                <div className="p-3 border-b border-[#2a2e35]">
+                    <div className="font-semibold text-white text-sm">{user.name}</div>
+                    {user.email && <div className="text-xs text-gray-500 mt-0.5">{user.email}</div>}
+                    {hasPermission('api_full') && (
+                      <div className="mt-2 flex items-center gap-1">
+                        <span className="text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded">👑 管理员</span>
+                      </div>
+                    )}
                 </div>
 
-                {/* Actions */}
+                {/* Settings */}
+                <div className="py-1 border-b border-[#2a2e35]">
+                    <div className="px-3 py-1.5 text-xs text-gray-500 uppercase tracking-wider">Sidebar</div>
+                    <div className="flex px-2 pb-2 gap-1">
+                      <button
+                        onClick={() => { onSetSidebarPosition('left'); setActiveMenu(null); }}
+                        className={cn("flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded border transition-colors text-xs",
+                          sidebarPosition === 'left' ? "bg-[#252932] border-blue-500/50 text-white" : "border-[#333] hover:bg-[#2a2e35] text-gray-400")}
+                      >
+                        <AlignLeft size={12} /><span>Left</span>
+                      </button>
+                      <button
+                        onClick={() => { onSetSidebarPosition('right'); setActiveMenu(null); }}
+                        className={cn("flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded border transition-colors text-xs",
+                          sidebarPosition === 'right' ? "bg-[#252932] border-blue-500/50 text-white" : "border-[#333] hover:bg-[#2a2e35] text-gray-400")}
+                      >
+                        <AlignRight size={12} /><span>Right</span>
+                      </button>
+                    </div>
+                </div>
+
+                {/* API Tokens (api_full only) */}
+                {hasPermission('api_full') && onOpenTokenManager && (
+                  <div className="py-1 border-b border-[#2a2e35]">
+                    <button
+                      onClick={() => { setActiveMenu(null); onOpenTokenManager(); }}
+                      className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-[#2a2e35] hover:text-white flex items-center gap-2"
+                    >
+                      <span>🔑</span><span>API Tokens</span>
+                    </button>
+                  </div>
+                )}
+
+                {/* Logout */}
                 <div className="py-1">
                     <button 
-                        onClick={() => {
-                            onLogout();
-                            setActiveMenu(null);
-                        }}
+                        onClick={() => { onLogout(); setActiveMenu(null); }}
                         className="w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-[#2a2e35] hover:text-red-300 flex items-center gap-2"
                     >
-                        <LogOut size={14} />
-                        <span>Log Out</span>
+                        <LogOut size={14} /><span>Log Out</span>
                     </button>
                 </div>
             </div>

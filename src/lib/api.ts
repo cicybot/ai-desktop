@@ -7,7 +7,7 @@ const getAuthToken = (): string => {
   const urlToken = params.get('token');
   if (urlToken) {
     localStorage.setItem('token', urlToken);
-    window.history.replaceState({}, '', window.location.pathname);
+    // 保留 URL 参数
     return urlToken;
   }
   return localStorage.getItem('token') || '';
@@ -85,6 +85,35 @@ export const authApi = {
   },
   logout: () => {
     localStorage.removeItem('token');
+  },
+};
+
+export interface TokenInfo {
+  id: number;
+  token_prefix: string;
+  group_id: number | null;
+  pane_id: string | null;
+  perms: string;
+  note: string | null;
+  expires_at: string | null;
+  created_at: string;
+}
+
+export interface TokenCreateResult extends TokenInfo {
+  token: string;
+}
+
+export const tokensApi = {
+  list: async (): Promise<TokenInfo[]> => {
+    const { data } = await api.get<{ tokens: TokenInfo[] }>('/auth/tokens');
+    return data.tokens;
+  },
+  create: async (params: { group_id?: number | null; perms: string[]; note?: string }): Promise<TokenCreateResult> => {
+    const { data } = await api.post<TokenCreateResult>('/auth/tokens', params);
+    return data;
+  },
+  delete: async (tokenId: number): Promise<void> => {
+    await api.delete(`/auth/tokens/${tokenId}`);
   },
 };
 
