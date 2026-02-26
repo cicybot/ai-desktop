@@ -102,8 +102,8 @@ export function TopBar({
   setLoading,
   onOpenTokenManager,
 }: TopBarProps) {
-  const hasPermission = (perm: string) => userPerms.includes(perm);
-  const isAdmin = hasPermission('api_full');
+  const hasPermission = (perm: string) => userPerms.includes('api_full') || userPerms.includes(perm);
+  const isAdmin = userPerms.includes('api_full');
   const currentGroupId = desktops.find(d => d.id === activeDesktopId)?.groupId || null;
 
   const [activeMenu, setActiveMenu] = useState<'chats' | 'apps' | 'desktops' | 'settings' | 'user' | null>(null);
