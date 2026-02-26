@@ -137,13 +137,11 @@ export const Window: React.FC<WindowProps> = ({
             <div className="flex-1 mx-4 flex justify-center items-center">
                 <input 
                     type="text" 
-                    value={window.url}
-                    onChange={(e) => onUpdate(window.id, { url: e.target.value })}
-                    onFocus={(e) => { e.target.dataset.focused = 'true'; e.target.value = window.url; }}
-                    onBlur={(e) => { e.target.dataset.focused = ''; try { e.target.value = new URL(window.url).hostname; } catch {} }}
-                    ref={(el) => { if (el && el.dataset.focused !== 'true') try { el.value = new URL(window.url).hostname; } catch {} }}
+                    readOnly
+                    value={window.title}
                     onPointerDown={(e) => e.stopPropagation()}
-                    className="w-full max-w-md bg-white/50 hover:bg-white/80 focus:bg-white text-xs text-center focus:text-left px-2 py-0.5 rounded transition-colors outline-none border border-transparent focus:border-blue-400/50 placeholder-gray-400 truncate cursor-text"
+                    onDoubleClick={() => { setTitleDraft(window.title); setEditingTitle(true); }}
+                    className="w-full max-w-md bg-white/50 text-xs text-center px-2 py-0.5 rounded transition-colors outline-none border border-transparent placeholder-gray-400 truncate cursor-default"
                     placeholder="Enter URL..."
                 />
             </div>
@@ -173,19 +171,16 @@ export const Window: React.FC<WindowProps> = ({
 
         {/* Content */}
         <div className="flex-1 relative bg-white w-full h-full overflow-hidden">
-            {/* Overlay to catch clicks during drag/resize or when inactive */}
             {showMask && (
                 <div 
                     className="absolute inset-0 z-50 bg-transparent" 
-                    // If it's inactive, clicking this mask should focus the window.
-                    // The parent onPointerDown handles focus, but if we have an iframe, 
-                    // the iframe swallows the event unless we have this mask.
                 />
             )}
             <iframe
                 src={window.url}
                 className="w-full h-full border-none"
                 title={window.title}
+                sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-modals"
                 style={{ pointerEvents: showMask ? 'none' : 'auto' }}
             />
         </div>
@@ -227,7 +222,7 @@ export const Window: React.FC<WindowProps> = ({
         height: size.height,
       }}
       className={cn(
-        "absolute flex flex-col bg-white rounded-lg shadow-lg border border-gray-200 overflow-hidden",
+        "absolute flex flex-col bg-white rounded-lg shadow-lg border border-gray-200",
         isActive ? "shadow-xl" : "opacity-95 shadow-md"
       )}
       onPointerDown={() => onFocus(window.id)}
@@ -244,13 +239,13 @@ export const Window: React.FC<WindowProps> = ({
         handle={(h, ref) => {
             const className = cn(
                 "absolute z-50 hover:bg-blue-500/20 transition-colors",
-                h === 's' && "bottom-0 left-0 right-0 h-2 cursor-s-resize -mb-1",
-                h === 'e' && "right-0 top-0 bottom-0 w-2 cursor-e-resize -mr-1",
-                h === 'se' && "bottom-0 right-0 w-5 h-5 cursor-se-resize z-50 -mr-1 -mb-1"
+                h === 's' && "bottom-0 left-0 right-0 h-3 cursor-s-resize -mb-1.5",
+                h === 'e' && "right-0 top-0 bottom-0 w-3 cursor-e-resize -mr-1.5",
+                h === 'se' && "bottom-0 right-0 w-8 h-8 cursor-se-resize z-50 -mr-2 -mb-2"
             );
             return <span className={className} ref={ref} />;
         }}
-        className="flex flex-col w-full h-full"
+        className="flex flex-col w-full h-full overflow-hidden rounded-lg"
       >
         {WindowContent}
       </ResizableBox>

@@ -12,6 +12,7 @@ export interface WindowState {
   zIndex: number;
   isMinimized: boolean;
   isMaximized: boolean;
+  appId?: number;
 }
 
 export interface DesktopState {

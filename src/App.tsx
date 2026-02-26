@@ -86,6 +86,7 @@ export default function App() {
         const tokenGroupId = result.group_id || null;
         setUserPerms(result.perms || []);
         setUserGroupId(tokenGroupId);
+        if ((result.perms || []).includes('api_full')) document.title = '超级管理 - ZapOS';
         
         // Step 3: 校验 URL group 参数与 token group_id 一致
         if (urlGroup && tokenGroupId !== null) {
@@ -100,13 +101,15 @@ export default function App() {
           }
         }
         
+        const isSuper = (result.perms || []).includes('api_full');
         setUser({
           id: 'u-token',
-          name: 'Admin',
+          name: isSuper ? '超级用户' : (result.note || 'User'),
           email: '',
-          avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=admin`,
-          plan: 'pro',
+          avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${isSuper ? 'super' : savedToken.slice(0, 8)}`,
+          plan: isSuper ? 'pro' : 'free',
         });
+        setIsLoginOpen(false);
       } catch {
         localStorage.removeItem('token');
         setIsLoading(false);
@@ -128,11 +131,8 @@ export default function App() {
         }
 
         if (groupsRes.groups && groupsRes.groups.length > 0) {
-          // Step 4: 客户 token 只加载自己的 group，管理员加载全部
-          let filteredGroups = groupsRes.groups;
-          if (userGroupId !== null) {
-            filteredGroups = groupsRes.groups.filter((g: Group) => g.id === userGroupId);
-          }
+          // Step 4: 后端已经根据权限过滤了 groups，前端直接使用
+          const filteredGroups = groupsRes.groups;
           
           if (filteredGroups.length === 0) {
             setDesktops([DEFAULT_DESKTOP]);
@@ -144,7 +144,7 @@ export default function App() {
             filteredGroups.map(async (group: Group) => {
               try {
                 const detail = await groupsApi.get(group.id);
-                const windows: WindowState[] = (detail.panes || []).map((p: any) => {
+                const paneWindows: WindowState[] = (detail.panes || []).map((p: any) => {
                   const ttyd = ttydMap.get(p.pane_id);
                   return {
                     id: p.pane_id,
@@ -160,6 +160,21 @@ export default function App() {
                     isMaximized: false,
                   };
                 });
+                const appWindows: WindowState[] = (detail.apps || []).map((a: any, i: number) => ({
+                  id: `app-${a.id}`,
+                  type: 'preview' as WindowType,
+                  title: a.name,
+                  url: a.url,
+                  x: 150 + i * 30,
+                  y: 150 + i * 30,
+                  width: 1050,
+                  height: 700,
+                  zIndex: paneWindows.length + i + 1,
+                  isMinimized: false,
+                  isMaximized: false,
+                  appId: a.id,
+                }));
+                const windows = [...paneWindows, ...appWindows];
                 return {
                   id: `desktop-${group.id}`,
                   groupId: group.id,
@@ -181,7 +196,10 @@ export default function App() {
             })
           );
           setDesktops(loadedDesktops);
-          setActiveDesktopId(loadedDesktops[0].id);
+          const targetDesktop = urlGroup
+            ? loadedDesktops.find(d => d.groupId === parseInt(urlGroup, 10))
+            : loadedDesktops[0];
+          setActiveDesktopId((targetDesktop || loadedDesktops[0]).id);
         }
       } catch (e) {
         console.error('Failed to load from API, falling back to localStorage', e);
@@ -232,7 +250,7 @@ export default function App() {
   const activeConversationId = activeDesktop.activeConversationId;
   const activeConversation = conversations.find(c => c.id === activeConversationId);
 
-  const handleAddWindow = async (type: WindowType, url?: string, title?: string, paneId?: string) => {
+  const handleAddWindow = async (type: WindowType, url?: string, title?: string, paneId?: string, appId?: number) => {
     if (!activeDesktop.groupId) return;
 
     // Dedup: if same paneId or same url already on this desktop, just focus it
@@ -263,7 +281,7 @@ export default function App() {
             setGlobalLoading(false);
           }
         }
-        await groupsApi.addPane(activeDesktop.groupId, finalPaneId);
+        await groupsApi.addWindow(activeDesktop.groupId, finalPaneId, 'agent_ttyd');
         const newWindow: WindowState = {
           id: finalPaneId,
           type,
@@ -290,7 +308,7 @@ export default function App() {
       setGlobalLoading('Opening app...');
       await new Promise(r => setTimeout(r, 0));
       try {
-        const windowId = generateId();
+        const windowId = appId ? `app-${appId}` : generateId();
         const newWindow: WindowState = {
           id: windowId,
           type,
@@ -303,11 +321,15 @@ export default function App() {
           zIndex: maxZ + 1,
           isMinimized: false,
           isMaximized: false,
+          appId: appId,
         };
         try {
-          await groupsApi.addPane(activeDesktop.groupId, windowId);
+          // app 关联到 group
+          if (appId && activeDesktop.groupId) {
+            await groupsApi.addWindow(activeDesktop.groupId, `app-${appId}`, 'app_frame', String(appId));
+          }
         } catch (e) {
-          console.error('Failed to add pane to API:', e);
+          console.error('Failed to add app to group:', e);
         }
         setDesktops((prev) =>
           prev.map((d) =>
@@ -353,7 +375,7 @@ export default function App() {
     }
     if (window && (sanitizedUpdates.x !== undefined || sanitizedUpdates.y !== undefined || sanitizedUpdates.width !== undefined || sanitizedUpdates.height !== undefined || sanitizedUpdates.zIndex !== undefined)) {
       try {
-        await groupsApi.updatePaneLayout(activeDesktop.groupId, id, {
+        await groupsApi.updateWindowLayout(activeDesktop.groupId, id, {
           pos_x: sanitizedUpdates.x ?? window.x,
           pos_y: sanitizedUpdates.y ?? window.y,
           width: sanitizedUpdates.width ?? window.width,
@@ -398,8 +420,9 @@ export default function App() {
 
   const handleCloseWindow = async (id: string) => {
     const win = activeDesktop.windows.find(w => w.id === id);
+    console.log('[handleCloseWindow]', { id, groupId: activeDesktop.groupId });
 
-    // Remove from UI immediately
+    // 从 UI 立即移除
     setDesktops((prev) =>
       prev.map((d) =>
         d.id === activeDesktopId
@@ -409,12 +432,9 @@ export default function App() {
     );
     if (activeWindowId === id) setActiveWindowId(null);
 
-    // API cleanup in background
-    if (activeDesktop.groupId) {
-      groupsApi.removePane(activeDesktop.groupId, id).catch(() => {});
-    }
-    if (win?.type === 'ttyd') {
-      // Only remove from group, don't delete the pane/agent
+    // 统一解绑：一个 API 搞定
+    if (activeDesktop.groupId && win) {
+      groupsApi.removeWindow(activeDesktop.groupId, id).catch(() => {});
     }
   };
 
@@ -751,12 +771,12 @@ export default function App() {
   const showCentralPrompt = activeDesktop.windows.length === 0;
   const activeDesktopConversations = conversations.filter(c => c.desktopId === activeDesktopId);
   
-  // Auto-open sidebar when there are windows
-  useEffect(() => {
-    if (activeDesktop.windows.length > 0 && !isSidebarOpen) {
-      setIsSidebarOpen(true);
-    }
-  }, [activeDesktop.windows.length]);
+  // Auto-open sidebar - disabled
+  // useEffect(() => {
+  //   if (activeDesktop.windows.length > 0 && !isSidebarOpen) {
+  //     setIsSidebarOpen(true);
+  //   }
+  // }, [activeDesktop.windows.length]);
 
   const handleLayoutSplit = (direction: 'h' | 'v') => {
     const wins = activeDesktop.windows.filter(w => !w.isMinimized);
@@ -900,7 +920,7 @@ export default function App() {
         if (Math.abs(a.y - b.y) > 50) return a.y - b.y;
         return a.x - b.x;
       });
-      const layoutPanes: { pane_id: string; pos_x: number; pos_y: number; width: number; height: number; z_index: number }[] = [];
+      const layoutPanes: { win_id: string; pos_x: number; pos_y: number; width: number; height: number; z_index: number }[] = [];
       let idx = 0;
       for (let r = 0; r < bestRows; r++) {
         const remaining = count - idx;
@@ -912,7 +932,7 @@ export default function App() {
           if (idx >= count) break;
           const w = sortedWindows[idx];
           layoutPanes.push({
-            pane_id: w.id,
+            win_id: w.id,
             pos_x: startX + (c * (widthPerWindow + gap)),
             pos_y: startY + (r * (rowHeight + gap)),
             width: widthPerWindow,
@@ -943,7 +963,16 @@ export default function App() {
       <TopBar
         desktops={desktops}
         activeDesktopId={activeDesktopId}
-        onSwitchDesktop={setActiveDesktopId}
+        onSwitchDesktop={(id) => {
+          setActiveDesktopId(id);
+          const desktop = desktops.find(d => d.id === id);
+          if (desktop?.groupId) {
+            const params = new URLSearchParams(window.location.search);
+            params.set('group', String(desktop.groupId));
+            window.history.replaceState({}, '', `${window.location.pathname}?${params}`);
+            setUserGroupId(desktop.groupId);
+          }
+        }}
         onAddDesktop={handleAddDesktop}
         onRemoveDesktop={handleRemoveDesktop}
         onRenameDesktop={handleRenameDesktop}
@@ -974,20 +1003,7 @@ export default function App() {
       />
       
       <div className="flex-1 flex overflow-hidden relative">
-        {/* Left Sidebar */}
-        {sidebarPosition === 'left' && (
-            <Sidebar
-                isOpen={isSidebarOpen}
-                position="left"
-                conversations={activeDesktopConversations}
-                activeConversationId={activeConversationId}
-                onNewConversation={handleNewConversation}
-                onSelectConversation={setActiveConversationId}
-                onSendMessage={handleSendMessage}
-                onClose={() => setIsSidebarOpen(false)}
-                groupId={activeDesktop.groupId}
-            />
-        )}
+        {/* Left Sidebar - hidden */}
 
         <div className="flex-1 relative">
             {desktops.map((desktop) => (
@@ -1006,15 +1022,16 @@ export default function App() {
               </div>
             ))}
             
-            {/* CentralPrompt - 空桌面时居中显示，渲染在 Desktop 之后确保在最上层 */}
-            {showCentralPrompt && (
-                <CentralPrompt 
-                  onSendMessage={handleSendMessage} 
-                  groupId={activeDesktop?.groupId || null}
-                  userPerms={userPerms}
-                />
+            {/* 空桌面欢迎信息 */}
+            {activeDesktop.windows.length === 0 && (
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div className="text-center text-gray-500">
+                  <div className="text-4xl mb-4">👋</div>
+                  <div className="text-lg font-medium text-gray-400">Welcome to ZapOS</div>
+                  <div className="text-sm mt-2">从顶部菜单打开 Agent 或 App 开始工作</div>
+                </div>
+              </div>
             )}
-            
             <Dock
                 windows={activeDesktop.windows}
                 activeWindowId={activeWindowId}
@@ -1026,20 +1043,7 @@ export default function App() {
             />
         </div>
 
-        {/* Right Sidebar */}
-        {sidebarPosition === 'right' && (
-            <Sidebar
-                isOpen={isSidebarOpen}
-                position="right"
-                conversations={activeDesktopConversations}
-                activeConversationId={activeConversationId}
-                onNewConversation={handleNewConversation}
-                onSelectConversation={setActiveConversationId}
-                onSendMessage={handleSendMessage}
-                onClose={() => setIsSidebarOpen(false)}
-                groupId={activeDesktop.groupId}
-            />
-        )}
+        {/* Right Sidebar - hidden */}
       </div>
 
       <LoginDialog 

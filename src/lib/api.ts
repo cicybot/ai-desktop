@@ -57,7 +57,7 @@ export interface Pane {
 }
 
 export interface PaneLayoutItem {
-  pane_id: string;
+  win_id: string;
   pos_x: number;
   pos_y: number;
   width: number;
@@ -143,27 +143,28 @@ export const groupsApi = {
     return data;
   },
 
-  addPane: async (groupId: number, paneId: string) => {
-    const { data } = await api.post<{ success: boolean; group_id: number; pane_id: string }>(`/groups/${groupId}/panes/${paneId}`);
+  // 统一窗口 API
+  addWindow: async (groupId: number, winId: string, winType: string = 'agent_ttyd', refId?: string) => {
+    const { data } = await api.post(`/groups/${groupId}/windows`, { win_id: winId, win_type: winType, ref_id: refId || winId });
     return data;
   },
 
-  removePane: async (groupId: number, paneId: string) => {
-    const { data } = await api.delete<{ success: boolean; group_id: number; pane_id: string }>(`/groups/${groupId}/panes/${paneId}`);
+  removeWindow: async (groupId: number, winId: string) => {
+    const { data } = await api.delete(`/groups/${groupId}/windows/${winId}`);
     return data;
   },
 
-  updatePaneLayout: async (
+  updateWindowLayout: async (
     groupId: number,
-    paneId: string,
+    winId: string,
     layout: { pos_x?: number; pos_y?: number; width?: number; height?: number; z_index?: number }
   ) => {
-    const { data } = await api.patch<{ success: boolean; group_id: number; pane_id: string }>(`/groups/${groupId}/panes/${paneId}/layout`, layout);
+    const { data } = await api.patch(`/groups/${groupId}/windows/${winId}/layout`, layout);
     return data;
   },
 
   batchUpdateLayout: async (groupId: number, panes: PaneLayoutItem[]) => {
-    const { data } = await api.patch<{ success: boolean; group_id: number; updated: number }>(`/groups/${groupId}/layout`, { panes });
+    const { data } = await api.patch(`/groups/${groupId}/layout`, { panes });
     return data;
   },
 };

@@ -43,11 +43,11 @@ export function LoginDialog({ isOpen, onClose, user, onLogin, onLogout }: LoginD
   return (
     <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/50 backdrop-blur-sm">
       <div className="bg-[#16181d] border border-[#2a2e35] rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col relative">
-        <button onClick={onClose} className="absolute top-4 right-4 p-2 text-gray-400 hover:text-white hover:bg-[#2a2e35] rounded-lg transition-colors z-50">
+        <button onClick={onClose} className="absolute top-4 right-4 p-2 text-gray-400 hover:text-white hover:bg-[#2a2e35] rounded-lg transition-colors z-50" style={{ display: user ? undefined : 'none' }}>
           <X size={20} />
         </button>
 
-        <div className="p-8 flex flex-col">
+        <div className="p-8 flex flex-col items-center">
           <div className="mb-8"><Logo size="lg" /></div>
 
           {user ? (
@@ -62,7 +62,7 @@ export function LoginDialog({ isOpen, onClose, user, onLogin, onLogout }: LoginD
               </button>
             </div>
           ) : (
-            <div>
+            <div className="w-full text-center">
               <h2 className="text-2xl font-bold text-white mb-2">Welcome</h2>
               <p className="text-gray-400 mb-6 text-sm">输入 API Token 登录</p>
 
