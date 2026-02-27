@@ -148,7 +148,6 @@ export const Window: React.FC<WindowProps> = ({
             )}
             
             <div className="flex items-center gap-1">
-                {window.type !== 'ttyd' && (
                 <button
                     onClick={() => { const iframe = document.querySelector<HTMLIFrameElement>(`iframe[title="${window.title}"]`); if (iframe) iframe.src = iframe.src; }}
                     onPointerDown={(e) => e.stopPropagation()}
@@ -157,7 +156,6 @@ export const Window: React.FC<WindowProps> = ({
                 >
                     <RotateCw size={12} className="text-gray-500" />
                 </button>
-                )}
                 <button
                     onClick={() => globalThis.open(window.url, '_blank')}
                     onPointerDown={(e) => e.stopPropagation()}
