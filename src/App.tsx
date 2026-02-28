@@ -1022,15 +1022,13 @@ export default function App() {
               </div>
             ))}
             
-            {/* 空桌面欢迎信息 */}
-            {activeDesktop.windows.length === 0 && (
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <div className="text-center text-gray-500">
-                  <div className="text-4xl mb-4">👋</div>
-                  <div className="text-lg font-medium text-gray-400">Welcome to ZapOS</div>
-                  <div className="text-sm mt-2">从顶部菜单打开 Agent 或 App 开始工作</div>
-                </div>
-              </div>
+            {/* Central Prompt */}
+            {showCentralPrompt && (
+              <CentralPrompt 
+                onSendMessage={handleSendMessage}
+                groupId={activeDesktop.groupId}
+                userPerms={userPerms}
+              />
             )}
             <Dock
                 windows={activeDesktop.windows}

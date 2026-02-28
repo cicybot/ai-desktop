@@ -201,30 +201,6 @@ export function CentralPrompt({ onSendMessage, groupId, userPerms }: CentralProm
           </div>
         )}
 
-        {/* Message History */}
-        {hasMessages && (
-          <div className="mb-4 max-h-96 overflow-y-auto bg-[#1e1e1e]/90 backdrop-blur-xl rounded-xl border border-[#333] p-4 space-y-3">
-            {messages.map((msg) => (
-              <div key={msg.id} className={cn(
-                "flex gap-3",
-                msg.role === 'user' ? "justify-end" : "justify-start"
-              )}>
-                <div className={cn(
-                  "max-w-[80%] rounded-lg px-4 py-2",
-                  msg.role === 'user' 
-                    ? "bg-yellow-600 text-white" 
-                    : "bg-[#2d2d2d] text-gray-200"
-                )}>
-                  <p className="text-sm">{msg.content}</p>
-                  <p className="text-xs opacity-60 mt-1">
-                    {msg.timestamp.toLocaleTimeString()}
-                  </p>
-                </div>
-              </div>
-            ))}
-            <div ref={messagesEndRef} />
-          </div>
-        )}
         
         {/* Input Box */}
         <div className="relative group">
