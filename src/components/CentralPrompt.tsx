@@ -17,6 +17,7 @@ interface CentralPromptProps {
 }
 
 export function CentralPrompt({ onSendMessage, groupId, userPerms }: CentralPromptProps) {
+  console.log('CentralPrompt groupId:', groupId);
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [isConnected, setIsConnected] = useState(false);

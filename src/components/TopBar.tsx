@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Terminal, Globe, Plus, RefreshCw, Monitor, Trash2, ChevronDown, LogOut, Sidebar as SidebarIcon, AlignLeft, AlignRight, Wifi, LayoutGrid, User as UserIcon, Bot, Loader2, RotateCw, Pencil, Columns, Rows } from 'lucide-react';
+import { Terminal, Globe, Plus, RefreshCw, Monitor, Trash2, ChevronDown, LogOut, Sidebar as SidebarIcon, AlignLeft, AlignRight, Wifi, LayoutGrid, User as UserIcon, Bot, Loader2, RotateCw, Pencil, Columns, Rows, ExternalLink } from 'lucide-react';
 import axios from 'axios';
 import { cn } from '../lib/utils';
-import { WindowType, DesktopState, User } from '../types';
+import { WindowType, DesktopState, User, getTtydUrl } from '../types';
 import { Logo } from './Logo';
 import { ttydApi, appsApi, tmuxApi, groupsApi } from '../lib/api';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -399,6 +399,7 @@ export function TopBar({
                         <span className="truncate flex-1">{a.title || a.pane_id}</span>
                     )}
                     {hasPermission('agent_manage') && <div className="flex gap-1 opacity-0 group-hover:opacity-100" onClick={e => e.stopPropagation()}>
+                      <button onClick={() => window.open(getTtydUrl(a.pane_id), '_blank')} className="text-gray-500 hover:text-green-400 p-0.5" title="Open in new window"><ExternalLink size={12} /></button>
                       <button onClick={() => { setEditingAgentId(a.pane_id); setEditingAgentName(a.title || a.pane_id); }} className="text-gray-500 hover:text-blue-400 p-0.5" title="Rename"><Pencil size={12} /></button>
                       <button onClick={() => setConfirm({ title: 'Restart Agent', message: `Restart "${a.title || a.pane_id}"?`, onConfirm: () => { setConfirm(null); withLoading('Restarting...', () => tmuxApi.restartPane(a.pane_id).then(loadAgents)); } })} className="text-gray-500 hover:text-yellow-400 p-0.5" title="Restart"><RotateCw size={12} /></button>
                       <button onClick={() => setConfirm({ title: 'Delete Agent', message: `Delete "${a.title || a.pane_id}"? This cannot be undone.`, danger: true, onConfirm: () => { setConfirm(null); withLoading('Deleting agent...', () => tmuxApi.deletePane(a.pane_id).then(loadAgents)); } })} className="text-gray-500 hover:text-red-400 p-0.5" title="Delete"><Trash2 size={12} /></button>
